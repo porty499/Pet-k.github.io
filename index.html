@@ -30,6 +30,18 @@ transform:scale(.92);transition:opacity .55s ease,transform .55s ease}
 #introSkip{position:absolute;right:clamp(14px,4vw,40px);bottom:clamp(14px,4vw,40px);
 background:#191b1be8;color:#f4f0e6;border:1px solid #ffffff55;font-size:14px}
 #introSkip:focus-visible{outline:2px solid #f2d499;outline-offset:3px}
+#gameNews {
+  box-sizing:border-box; width:min(500px,calc(100% - 32px)); max-height:calc(100% - 32px);
+  padding:clamp(20px,5vw,32px); overflow:auto; border:1px solid #8fa69a65;
+  border-top:2px solid #e7cb92; border-radius:14px; background:#121a16; color:#eef5ef;
+}
+#gameNews::backdrop {background:#030705bb}
+#gameNews h2 {margin:0 0 16px; font:700 clamp(25px,6vw,36px)/1.1 Georgia,serif}
+#gameNews ul {margin:0 0 20px; padding-left:20px}
+#gameNews li {margin:0 0 10px; line-height:1.45; color:#dce4de}
+#gameNews strong {color:#f4e2bb}
+#gameNews button {width:100%; background:#e7cb92; color:#1d1a12}
+#gameNews button:focus-visible {outline:2px solid #f2d499; outline-offset:3px}
   h1{margin:0 0 7px;font-size:clamp(30px,6vw,54px);letter-spacing:.02em}
   button{cursor:pointer;border:0;border-radius:12px;padding:14px 24px;font-weight:800;font-size:17px;background:#d6eee0;color:#102019;box-shadow:0 10px 30px #0007}
 #card {
@@ -180,6 +192,16 @@ border-radius:16px;box-shadow:0 20px 70px #000}
   </div>
 </div>
 <div id="studioIntro"><img id="studioIntroImage" alt=""><button id="introSkip" type="button">Přeskočit intro (Esc)</button></div>
+<dialog id="gameNews" aria-labelledby="gameNewsTitle">
+  <h2 id="gameNewsTitle">Novinky v Petříkově ordinaci</h2>
+  <ul>
+    <li><strong>Noví sponzoři</strong> · V intru se představují Burka King a Sam Alfa Studio.</li>
+    <li><strong>Kompatibilita s PS6</strong> · Fiktivní oznámení v rámci hry. Ordinace se hraje ve webovém prohlížeči.</li>
+    <li><strong>HopnMop Studio skončilo</strong> · Jeho místo v intru převzalo Sam Alfa Studio.</li>
+    <li><strong>Multiplayer</strong> · Zahrajte si ve dvou přes kód místnosti. Hlas spoluhráče slábne se vzdáleností.</li>
+  </ul>
+  <form method="dialog"><button type="submit" autofocus>Pokračovat do lobby</button></form>
+</dialog>
 <canvas id="gl"></canvas>
 <div id="hud">
   <div id="cross"></div><div id="prompt"></div><div id="place">Recepce</div><div id="targetGuide"><div id="targetArrow">▲</div><div id="targetName">Karta pacienta</div><div id="targetRoom">Čekárna · 0 m</div></div><div id="objectiveBanner"><h2 id="objectiveBannerTitle">NOVÝ ÚKOL</h2><p id="objectiveBannerText"></p></div><div id="hideShade"></div><div id="hideNoise"><div id="hideNoiseLabel"><span>HLASITOST VE SKŘÍNI</span><span id="noiseValue">10 %</span></div><div id="noiseTrack"><div id="noiseFill"></div></div><div id="noiseHint">Měřák reaguje pouze na skutečný zvuk z mikrofonu. Myš a klávesy se nepočítají.</div><div id="micStatus">MIKROFON: čeká na povolení</div></div><div id="objective"><b>CO TEĎ MUSÍŠ UDĚLAT</b><span id="objectiveText">Najdi kartu pacienta v čekárně.</span><div id="objectiveAction">Jdi do čekárny, hledej žlutou zářící značku a u předmětu stiskni E.</div><div class="count" id="progressCount">Postup 0 / 5</div><div id="goalInfo">CÍL: Karta pacienta · Čekárna</div></div>
@@ -2046,9 +2068,26 @@ function finishStudioIntro(){
  bootUnlocked=true;
  applyRandomLobbyBackground();
  overlay.style.display='flex';
- refreshRoomControls()
+ refreshRoomControls();
+ showGameNewsIfDue()
 }
 document.getElementById('introSkip').onclick=finishStudioIntro;
+const gameNewsEl=document.getElementById('gameNews');
+const gameNewsVisitKey='petrikova-ordinace:last-news-lobby-visit';
+const gameNewsReturnInterval=7*24*60*60*1000;
+function showGameNewsIfDue(){
+ const now=Date.now();
+ let previousVisit=0;
+ try{
+  previousVisit=Number(window.localStorage.getItem(gameNewsVisitKey));
+  window.localStorage.setItem(gameNewsVisitKey,String(now))
+ }catch(_error){}
+ if(!previousVisit||previousVisit>now||now-previousVisit>=gameNewsReturnInterval)gameNewsEl.showModal()
+}
+gameNewsEl.addEventListener('close',()=>{
+ const next=startBtn.disabled?multiplayerButtonEl:startBtn;
+ next.focus()
+});
 function submitBootCode(){
  const value=String(codeInputEl.value||'').trim().toLowerCase();
  if(value.length<5){
