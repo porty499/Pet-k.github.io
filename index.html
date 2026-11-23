@@ -182,6 +182,10 @@ border-radius:16px;box-shadow:0 20px 70px #000}
 #endingHint{margin-top:13px;font-size:12px;color:#ddd;opacity:.85}
 #error{position:fixed;inset:0;background:#111;color:#fff;z-index:400;display:none;padding:30px;white-space:pre-wrap}
   @media(max-width:700px){#help{display:none}#mini{width:220px;height:160px}}
+#hunterModeRow{display:flex;align-items:center;gap:9px;margin:.75rem 0;color:#e0ccb2;font-size:.86rem}
+#hunterModeRow select{background:#201c16;color:#fff1d6;border:1px solid #6c5941;border-radius:5px;padding:7px 9px}
+#hunterHud{position:absolute;top:70px;left:16px;max-width:calc(100% - 32px);padding:9px 13px;background:#171309df;color:#fff1c0;border:1px solid #8d7955;border-radius:4px;font-size:clamp(12px,1.5vw,16px);line-height:1.45;white-space:pre-wrap}
+#hunterHud[hidden],#hunterModeRow[hidden],#endingImage[hidden]{display:none}
 </style>
 </head>
 <body>
@@ -209,6 +213,7 @@ border-radius:16px;box-shadow:0 20px 70px #000}
   <div id="flashState">Baterka: zapnutá</div><div id="toast"></div>
   <div id="partnerNickname" dir="auto" hidden aria-hidden="true"></div>
   <div id="voiceHud" hidden></div>
+  <div id="hunterHud" hidden></div>
   <div id="miniWrap"><canvas id="mini" width="540" height="390"></canvas></div>
 </div>
 <div id="overlay">
@@ -232,6 +237,9 @@ border-radius:16px;box-shadow:0 20px 70px #000}
           <button type="submit">Připojit se</button>
         </form>
       </div>
+      <label id="hunterModeRow" hidden>Režim hry
+        <select id="hunterMode"><option id="roomCoopMode" value="coop">Ordinace · kooperace pro 2</option><option value="hunter">HUNTER · 2 až 6 hráčů</option></select>
+      </label>
       <div class="room-actions" id="roomSession" hidden>
         <button id="roomCopy" type="button" hidden>Kopírovat kód</button>
         <button id="roomPlay" type="button" hidden>Spustit hru</button>
@@ -528,6 +536,7 @@ varying vec3 vNormal;
 uniform sampler2D uTex;
 uniform vec3 uTint,uCamPos,uCamDir,uFogColor;
 uniform float uFlash,uAmbient,uGlow;
+uniform vec4 uHunterLights[5];
 void main(){
  vec4 tex=texture2D(uTex,vUV);
  vec3 base=tex.rgb*uTint;
@@ -542,6 +551,13 @@ void main(){
  float flashlight=uFlash*cone*(0.30+1.20*facing)/(1.0+0.025*dist*dist);
  float clinical=0.0015*max(dot(n,vec3(0.0,1.0,0.0)),0.0);
  vec3 col=base*(uAmbient+diffuse+flashlight+clinical)+base*uGlow;
+ for(int i=0;i<5;i++){
+  vec3 light=uHunterLights[i].xyz-vWorld;
+  float distanceSquared=dot(light,light);
+  float strength=uHunterLights[i].w*max(0.0,1.0-distanceSquared/11.5);
+  float litFace=0.25+0.75*max(0.0,dot(n,light*inversesqrt(max(distanceSquared,0.001))));
+  col+=base*vec3(0.83,0.88,0.55)*strength*litFace;
+ }
  float fog=smoothstep(14.0,32.0,dist);
  col=mix(col,uFogColor,fog*0.88);
  col=pow(max(col,0.0),vec3(0.90));
@@ -561,7 +577,7 @@ try{
  if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error('Chyba spojení shaderů: '+gl.getProgramInfoLog(program));
  gl.useProgram(program);
 }catch(e){showFatal('Nepodařilo se připravit 3D vykreslování.',e.message);throw e;}
-const U={};['uModel','uView','uProj','uUVScale','uTex','uTint','uCamPos','uCamDir','uFogColor','uFlash','uAmbient','uGlow','uUseSkin'].forEach(n=>U[n]=gl.getUniformLocation(program,n));
+const U={};['uModel','uView','uProj','uUVScale','uTex','uTint','uCamPos','uCamDir','uFogColor','uFlash','uAmbient','uGlow','uUseSkin','uHunterLights[0]'].forEach(n=>U[n]=gl.getUniformLocation(program,n));
 U.bones=gl.getUniformLocation(program,'uBones[0]');
 const A={pos:gl.getAttribLocation(program,'aPos'),norm:gl.getAttribLocation(program,'aNormal'),uv:gl.getAttribLocation(program,'aUV'),joint:gl.getAttribLocation(program,'aJoint'),weight:gl.getAttribLocation(program,'aWeight')};
 
@@ -650,12 +666,12 @@ function m4rot(rx,ry,rz){return m4mul(m4mul(m4rz(rz),m4ry(ry)),m4rx(rx))}
 const PETR_PARENT=[-1,0,1,2,3,2,5,6,2,8,9,0,11,12,0,14,15];
 const PETR_BIND=[[0,1.02,0],[0,1.20,0],[0,1.43,0],[0,1.58,0],[0,1.72,0],[-.24,1.49,0],[-.49,1.35,0],[-.70,1.17,0],[.24,1.49,0],[.49,1.35,0],[.70,1.17,0],[-.11,.99,0],[-.12,.54,0],[-.12,.10,.02],[.11,.99,0],[.12,.54,0],[.12,.10,.02]];
 const petrBoneFlat=new Float32Array(17*16);
-function buildPetrBones(now){
+function buildPetrBones(now,actor=petr){
  const r=Array.from({length:17},()=>[0,0,0]);let bob=0;
- const movingRoute=petr.route&&petr.routeIndex<petr.route.length;
+ const movingRoute=actor.route&&actor.routeIndex<actor.route.length;
  let speed=.0018,amp=.20;
- if(petr.state===PETR_HUNT){speed=.0088;amp=.72}
- else if(petr.state===PETR_SEARCH){speed=.0036;amp=.30}
+ if(actor.state===PETR_HUNT){speed=.0088;amp=.72}
+ else if(actor.state===PETR_SEARCH){speed=.0036;amp=.30}
  else if(!movingRoute){speed=.0012;amp=.05}
  const c=now*speed,s=Math.sin(c),s2=Math.sin(c+Math.PI),kneeL=Math.max(0,-s),kneeR=Math.max(0,-s2);
  r[5][2]=.96;r[8][2]=-.96;
@@ -664,10 +680,10 @@ function buildPetrBones(now){
  r[13][0]=-s*amp*.18;r[16][0]=-s2*amp*.18;
  r[5][0]=s2*amp*.72;r[8][0]=s*amp*.72;r[6][0]=-.15+Math.max(0,s)*amp*.30;r[9][0]=-.15+Math.max(0,s2)*amp*.30;
  r[1][2]=-s*amp*.035;r[2][2]=s*amp*.025;
- if(petr.state===PETR_HUNT){r[0][0]=-.14;r[3][1]=Math.sin(c*.37)*.08}
- else if(petr.state===PETR_SEARCH){r[3][1]=Math.sin(now*.0017)*.48;r[4][1]=Math.sin(now*.0017)*.28;r[5][2]=.82;r[8][2]=-.82;r[6][0]=-.38;r[9][0]=-.38}
+ if(actor.state===PETR_HUNT){r[0][0]=-.14;r[3][1]=Math.sin(c*.37)*.08}
+ else if(actor.state===PETR_SEARCH){r[3][1]=Math.sin(now*.0017)*.48;r[4][1]=Math.sin(now*.0017)*.28;r[5][2]=.82;r[8][2]=-.82;r[6][0]=-.38;r[9][0]=-.38}
  else{r[3][1]=Math.sin(now*.00055)*.08}
- if(petr.crouched){
+ if(actor.crouched){
   bob=-.25+Math.abs(Math.sin(c*2))*.018;
   r[0][0]=-.44;r[1][0]=.28;r[2][0]=.20;
   r[11][0]=-.62;r[14][0]=-.62;
@@ -717,7 +733,7 @@ function whiteTexture(){
 }
 const textures={white:whiteTexture()};
 
-const objects=[],colliders=[],doors=[],hideables=[]; let hiddenIn=null; const WALL_H=2.25, WALL_T=.20;
+let objects=[],colliders=[],doors=[],hideables=[]; let hiddenIn=null; const WALL_H=2.25, WALL_T=.20;
 function addBox(x,y,z,sx,sy,sz,tex='white',collide=false,tint=[1,1,1],rot=0,uv=[1,1],name=''){
  const o={x,y,z,sx,sy,sz,tex,tint,rot,uv,name};objects.push(o);
  if(collide)colliders.push({x,y,z,hx:sx/2,hz:sz/2,rot,name,h:sy});
@@ -1215,6 +1231,7 @@ function showEndingScreen(type){
  try{if(document.pointerLockElement&&document.exitPointerLock)document.exitPointerLock()}catch(_e){}
  Object.keys(keys).forEach(k=>keys[k]=false);
  const commissioner=type==='commissioner';
+ endingImageEl.hidden=false;
  endingImageEl.src=commissioner?ENDING_IMAGES.commissioner:ENDING_IMAGES.escape;
  endingTitleEl.textContent=commissioner?'KOMISAŘ BURKANYK PETRA CHYTIL':'UTEKL JSI Z ORDINACE';
  endingBodyEl.textContent=commissioner
@@ -1228,6 +1245,7 @@ function closeEndingToLobby(){
  endingActive=false;
  endingScreenEl.classList.remove('show');
  endingScreenEl.setAttribute('aria-hidden','true');
+ if(room?.hunt?.winner){returnFromHunterRound(room);return}
  if(multiplayerEnding){
   multiplayerEnding=false;
   if(room)leaveRoom('Společná hra skončila.');
@@ -2400,6 +2418,7 @@ addEventListener('keydown',e=>{
  if(typing)return;
  if(['KeyW','KeyA','KeyS','KeyD','KeyE','KeyF','KeyM','ShiftLeft','ShiftRight','ControlLeft','ControlRight','KeyC','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.code))e.preventDefault();
  keys[e.code]=true;
+ if(room?.hunt){handleHunterKey(e);return}
  if(e.code==='KeyE'&&!e.repeat&&started){
   if(hiddenIn){exitHide();return}
   const i=nearestProgressInteractable(),h=nearestHideable(),d=nearestDoor();
@@ -2475,7 +2494,10 @@ function pauseToLobby(){
  applyRandomLobbyBackground();
  overlay.style.display='flex';
  if(room?.round){
-  showRoomStatus('Tvoje postava zůstává v ordinaci. Tlačítkem Pokračovat se vrátíš do hry.');
+   hunterHudEl.hidden=true;
+   if(room.hunt){room.hunt.charge=-1;room.hunt.chargeTime=0}
+   showRoomStatus(room.hunt?'Tvoje postava zůstává v aréně. Tlačítkem Pokračovat se vrátíš do hry.':
+    'Tvoje postava zůstává v ordinaci. Tlačítkem Pokračovat se vrátíš do hry.');
   updateRoomNetwork()
  }
 }
@@ -2494,7 +2516,7 @@ const roomNicknameEl=document.getElementById('roomNickname');
 const roomPartnerNameEl=document.getElementById('roomPartnerName');
 const roomCopyEl=document.getElementById('roomCopy');
 const roomPlayEl=document.getElementById('roomPlay');
-const roomLabel='petrikova-ordinace-coop-v1';
+const roomLabel='petrikova-ordinace-hunter-v2';
 const roomAlphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const spawnPose={...player};
 const initialRoomWorld=captureRoomWorld();
@@ -2531,17 +2553,38 @@ function loadPeerLibrary(){
  }
  return peerLibrary
 }
+function roomRoster(session){
+ if(!session?.id)return [];
+ if(!session.host)return session.roster;
+ return [{id:session.id,nick:cleanNickname(roomNicknameEl.value),ready:gameAssetsReady,lobby:!session.round},
+  ...Array.from(session.members.values()).filter(member=>member.connection.open).map(member=>(
+   {id:member.id,nick:member.nick,ready:member.ready,lobby:member.lobby}
+  ))]
+}
+
+function syncRoomRoster(session){
+ const players=roomRoster(session);
+ if(players.length>2)hunterModeEl.value='hunter';
+ document.getElementById('roomCoopMode').disabled=players.length>2;
+ sendRoom({type:'roster',players});
+ refreshRoomControls()
+}
+
 function refreshRoomControls(){
- roomSetupEl.hidden=!!room;
- roomSessionEl.hidden=!room;
- roomPartnerNameEl.hidden=!room?.connection?.open;
- roomPartnerNameEl.textContent=room?.remoteNickname?'Spoluhráč: '+room.remoteNickname:'Spoluhráč je připojený.';
- roomCopyEl.hidden=!(room?.host&&room.listening);
- roomPlayEl.hidden=!(room?.connection?.open&&(room.host||room.round));
- roomPlayEl.disabled=!gameAssetsReady||!room?.ready;
- roomPlayEl.textContent=room?.entered?'Pokračovat':room?.host?'Spustit hru':'Vstoupit do hry';
- startBtn.disabled=!gameAssetsReady||!!room;
- creditsButtonEl.disabled=!!room
+ const session=room,players=roomRoster(session);
+ roomSetupEl.hidden=!!session;
+ roomSessionEl.hidden=!session;
+ hunterModeRow.hidden=!session?.host||session.round;
+ roomPartnerNameEl.hidden=players.length===0;
+ roomPartnerNameEl.textContent=players.length+' / 6 hráčů · '+players.map(p=>p.nick||'Hráč').join(', ');
+ roomCopyEl.hidden=!(session?.host&&session.listening);
+ const canStart=players.length>=2&&players.every(p=>p.ready&&p.lobby);
+ roomPlayEl.hidden=!(session&&(session.round||session.host&&session.listening));
+ roomPlayEl.disabled=!gameAssetsReady||!(session?.round?!session.hunt?.winner:canStart);
+ roomPlayEl.textContent=session?.entered?'Pokračovat':session?.host?
+  (session.serial?'Spustit další kolo':'Spustit hru'):'Vstoupit do hry';
+ startBtn.disabled=!gameAssetsReady||!!session;
+ creditsButtonEl.disabled=!!session
 }
 function showRoomStatus(text){
  roomStatusEl.textContent=text;
@@ -2554,11 +2597,44 @@ function armRoomTimeout(session,text){
 }
 function sendRoom(packet){
  const session=room;
- const connection=session?.connection;
- if(!connection?.open)return;
+ if(!session)return;
+ if(session.host){
+  for(const member of session.members.values())sendRoomLink(session,member,packet)
+ }else sendRoomLink(session,session,packet)
+}
+
+function sendRoomLink(session,link,packet){
+ const connection=link.connection;
+ if(!connection?.open||packet.type==='hunt-state'&&connection.bufferSize>4)return;
  try{connection.send(packet)}catch(_error){
-  queueMicrotask(()=>{if(room===session)leaveRoom('Odeslání se nezdařilo. Zkus se připojit znovu.')})
+  queueMicrotask(()=>{
+   if(room!==session)return;
+   if(link===session)leaveRoom('Spojení s hostitelem se přerušilo.');
+   else dropRoomMember(session,link)
+  })
  }
+}
+
+function dropRoomMember(session,member){
+ if(room!==session||session.members.get(member.id)!==member)return;
+ session.members.delete(member.id);
+ clearTimeout(member.timeout);
+ member.connection.close();
+ if(session.hunt){
+  const hunt=session.hunt,playerState=hunt.players.get(member.id);
+  if(!hunt.winner&&playerState){
+   playerState.status='left';
+   playerState.pose=null;
+   if(member.id===hunt.hunterId)finishHunterRound(session,'survivor');
+   else checkHunterResult(session)
+  }
+ }else if(session.round){
+  leaveRoom('Spoluhráč se odpojil.');
+  return
+ }
+ session.connection=Array.from(session.members.values()).find(item=>item.connection.open)?.connection;
+ showRoomStatus('Hráč se odpojil z místnosti.');
+ syncRoomRoster(session)
 }
 function leaveRoom(text='Opustil/a jsi místnost.'){
  const session=room;
@@ -2566,37 +2642,51 @@ function leaveRoom(text='Opustil/a jsi místnost.'){
  room=null;
  clearTimeout(session.timeout);
  clearInterval(session.tick);
- session.outgoingVoice?.close();
- session.incomingVoice?.close();
- disconnectRoomAudio(session);
- syncMicrophoneTrack();
- session.connection?.close();
- session.peer?.destroy();
- if(session.solo){
-  started=false;
-  moving=false;
-  Object.keys(keys).forEach(key=>keys[key]=false);
-  if(hiddenIn)leaveHideImmediate();
-  if(jumpscareActive){
-   jumpscareActive=jumpscareCanDismiss=false;
-   clearTimeout(jumpscareTimer);
-   stopJumpscareMedia();
-   jumpscareEl.classList.remove('active','ready');
-   jumpscareEl.setAttribute('aria-hidden','true')
-  }
-  if(document.pointerLockElement===canvas)document.exitPointerLock();
-  restoreSoloGame(session.solo)
+ for(const member of session.members.values()){
+  clearTimeout(member.timeout);
+  member.connection.close()
  }
+ for(const link of session.voiceLinks.values())closeVoiceLink(link);
+ syncMicrophoneTrack();
+ if(!session.host)session.connection?.close();
+ session.peer?.destroy();
+ restoreRoomScene(session);
  if(!endingActive){
   overlay.style.display='flex';
   setMultiplayerPanel(true)
  }
- showRoomStatus(text)
+ showRoomStatus(text);
  updateVoiceHud()
+}
+
+function restoreRoomScene(session){
+ if(!session.solo)return;
+ started=false;
+ moving=false;
+ Object.keys(keys).forEach(key=>keys[key]=false);
+ if(hiddenIn)leaveHideImmediate();
+ if(jumpscareActive){
+  jumpscareActive=jumpscareCanDismiss=false;
+  clearTimeout(jumpscareTimer);
+  stopJumpscareMedia();
+  jumpscareEl.classList.remove('active','ready');
+  jumpscareEl.setAttribute('aria-hidden','true')
+ }
+ if(document.pointerLockElement===canvas)document.exitPointerLock?.();
+ if(session.hunt){
+  ({objects,colliders,doors,hideables,mapVisible}=session.hunt.original);
+  miniWrap.style.display=mapVisible?'block':'none';
+  document.getElementById('help').textContent=session.hunt.original.help;
+  goalInfoEl.hidden=false;
+  endingImageEl.hidden=false;
+  hunterHudEl.hidden=true
+ }
+ restoreSoloGame(session.solo);
+ session.solo=null
 }
 async function openRoom(host,code){
  if(room)return;
- const session={host,code,remote:null};
+ const session={host,code,members:new Map(),roster:[],voiceLinks:new Map(),round:false,serial:0,remote:null};
  room=session;
  showRoomStatus(host?'Vytvářím místnost…':'Připojuji se k místnosti…');
  try{resumeGameAudio();initMicrophone()}catch(_error){}
@@ -2604,19 +2694,28 @@ async function openRoom(host,code){
  try{
   const Peer=await loadPeerLibrary();
   if(room!==session)return;
-  const id='petrikova-ordinace-v1-'+code;
-  const peer=session.peer=host?new Peer(id,{secure:true}):new Peer({secure:true});
-  peer.on('open',()=>{
+  const hostId=roomLabel+'-'+code;
+  const peer=session.peer=host?new Peer(hostId,{secure:true}):new Peer({secure:true});
+  peer.on('open',id=>{
    if(room!==session)return;
+   session.id=id;
    if(host){
     clearTimeout(session.timeout);
     session.listening=true;
-    showRoomStatus('Kód místnosti '+code+' · čekám na druhého hráče.')
-   }else bindRoomConnection(session,peer.connect(id,{label:roomLabel,serialization:'json',reliable:true}))
+    session.tick=setInterval(updateRoomNetwork,65);
+    showRoomStatus('Kód místnosti '+code+' · pozvi až pět dalších hráčů.');
+   }else bindRoomConnection(session,peer.connect(hostId,{label:roomLabel,serialization:'json',reliable:true}))
   });
   peer.on('connection',connection=>{
-   if(room!==session||!host||session.connection||connection.label!==roomLabel){
+   if(room!==session||!host||connection.label!==roomLabel||session.members.has(connection.peer)){
     connection.close();
+    return
+   }
+   if(session.round||session.members.size>=5){
+    connection.on('open',()=>{
+     connection.send({type:'rejected',reason:session.round?'Kolo už běží. Zkus se připojit po jeho konci.':'Místnost je plná (6 hráčů).'});
+     setTimeout(()=>connection.close(),350)
+    });
     return
    }
    bindRoomConnection(session,connection)
@@ -2624,30 +2723,103 @@ async function openRoom(host,code){
   peer.on('call',call=>answerRoomVoice(session,call));
   peer.on('error',error=>{
    if(room!==session)return;
-   if(error.type==='webrtc'&&session.connection?.open)return;
+   if(session.listening||session.connection?.open){
+    if(error.type==='network'||error.type==='disconnected')showRoomStatus('Signalizace se přerušila. Připojení hráči mohou pokračovat.');
+    return
+   }
    if(error.type==='peer-unavailable')leaveRoom('Místnost s tímto kódem se nepodařilo najít.');
    else leaveRoom('Připojení k multiplayeru se nezdařilo. Zkus to znovu.')
   });
   peer.on('disconnected',()=>{
-   if(room===session&&!session.connection?.open)leaveRoom('Spojení se službou PeerJS se přerušilo.')
+   if(room!==session)return;
+   if(session.listening||session.connection?.open){
+    try{peer.reconnect()}catch(_error){}
+   }else leaveRoom('Spojení se službou PeerJS se přerušilo.')
   })
  }catch(_error){
   if(room===session)leaveRoom('PeerJS se nepodařilo načíst. Zkontroluj připojení k internetu.')
  }
 }
+
 function bindRoomConnection(session,connection){
- session.connection=connection;
- armRoomTimeout(session,'Přímé spojení mezi hráči se nepodařilo navázat.');
+ const member=session.host?{id:connection.peer,connection,nick:'',ready:false,lobby:true}:null;
+ if(member){
+  session.members.set(member.id,member);
+  member.timeout=setTimeout(()=>dropRoomMember(session,member),20000)
+ }else session.connection=connection;
  connection.on('open',()=>{
   if(room!==session)return;
-  clearTimeout(session.timeout);
-  showRoomStatus('Druhý hráč je připojený. Čekám na načtení hry…');
-  session.tick=setInterval(updateRoomNetwork,65);
-  updateRoomNetwork()
+  if(member){
+   clearTimeout(member.timeout);
+   if(session.round){
+    sendRoomLink(session,member,{type:'rejected',reason:'Kolo už běží. Zkus se připojit po jeho konci.'});
+    setTimeout(()=>dropRoomMember(session,member),350);
+    return
+   }
+   session.connection??=connection;
+   showRoomStatus('Po načtení hry mohou hráči nastoupit do kola.');
+   syncRoomRoster(session)
+  }else{
+   session.tick=setInterval(updateRoomNetwork,65);
+   updateRoomNetwork()
+  }
  });
- connection.on('data',packet=>{if(room===session)receiveRoomPacket(session,packet)});
- connection.on('close',()=>{if(room===session)leaveRoom('Druhý hráč se odpojil.')});
- connection.on('error',()=>{if(room===session)leaveRoom('Spojení s druhým hráčem se přerušilo.')})
+ connection.on('data',packet=>{if(room===session)receiveGroupPacket(session,member,packet)});
+ const closed=()=>{
+  if(room!==session)return;
+  if(member)dropRoomMember(session,member);
+  else leaveRoom('Spojení s hostitelem se přerušilo.')
+ };
+ connection.on('close',closed);
+ connection.on('error',closed)
+}
+
+function receiveGroupPacket(session,member,packet){
+ if(!packet||typeof packet!=='object')return;
+ if(member){
+  if(session.members.get(member.id)!==member)return;
+  if(packet.type==='ready'||packet.type==='nickname'){
+   if(packet.type==='ready')member.ready=true;
+   else member.nick=cleanNickname(packet.nickname);
+   if(!session.hunt&&session.round&&session.connection===member.connection)receiveRoomPacket(session,packet);
+   syncRoomRoster(session);
+   return
+  }
+  if(packet.type==='lobby'&&packet.round===session.serial&&(!session.hunt||session.hunt.winner)){
+   member.lobby=true;
+   syncRoomRoster(session);
+   return
+  }
+  if(session.hunt){receiveHunterPacket(session,packet,member.id);return}
+  if(session.round&&session.connection===member.connection)receiveRoomPacket(session,packet);
+  return
+ }
+ if(packet.type==='rejected'){leaveRoom(packet.reason);return}
+ if(packet.type==='roster'&&Array.isArray(packet.players)&&packet.players.length<=6){
+  const admitted=packet.players.some(player=>player?.id===session.id);
+  if(!admitted)return;
+  clearTimeout(session.timeout);
+  session.roster=packet.players.filter(player=>typeof player?.id==='string').map(player=>(
+   {id:player.id,nick:cleanNickname(player.nick),ready:player.ready===true,lobby:player.lobby===true}
+  ));
+  if(!session.admitted){
+   session.admitted=true;
+   showRoomStatus('Připojeno. Čekám na hostitele.')
+  }else refreshRoomControls();
+  return
+ }
+ if(packet.type==='start'&&packet.mode==='hunter'&&!session.round&&gameAssetsReady){
+  const {seed,round,hunterId,players}=packet;
+  if(!Number.isInteger(seed)||seed<0||seed>0xffffffff||!Number.isSafeInteger(round)||round<=session.serial||
+     !Array.isArray(players)||players.length<2||players.length>6||
+     new Set(players).size!==players.length||!players.every(id=>typeof id==='string'&&session.roster.some(p=>p.id===id))||
+     !players.includes(hunterId)||!players.includes(session.id))return;
+  beginHunterRound(session,seed,hunterId,players,round);
+  showRoomStatus(session.hunt.localHunter?'Hraješ za Petříka. Vstup do arény.':'Hraješ za přeživšího. Vstup do arény.');
+  return
+ }
+ if(session.hunt){receiveHunterPacket(session,packet);return}
+ receiveRoomPacket(session,packet)
 }
 function captureRoomWorld(){
  return {
@@ -2702,7 +2874,8 @@ function setRoomFlashlight(value){
  flashEl.textContent='Baterka: '+(flashlight?'zapnutá':'vypnutá')
 }
 function localPlayerPresent(){
- return room?.entered===true&&!jumpscareActive&&!endingActive
+ return room?.entered===true&&!jumpscareActive&&!endingActive&&
+  (!room.hunt||room.hunt.players.get(room.id)?.status==='active')
 }
 const voiceHudEl=document.getElementById('voiceHud');
 function syncMicrophoneTrack(){
@@ -2713,7 +2886,7 @@ function syncMicrophoneTrack(){
 function updateVoiceHud(){
  voiceHudEl.hidden=!(room?.round&&started);
  const text=!micReady?'Hlas · povol mikrofon v lobby':micMuted?'Hlas · ztlumený (V)':
-  room?.outgoingVoice?.open?'Hlas · zapnutý (V)':'Hlas · čekám na spojení (V)';
+  room&&[...room.voiceLinks.values()].some(link=>link.outgoingVoice?.open)?'Hlas · zapnutý (V)':'Hlas · čekám na spojení (V)';
  if(voiceHudEl.textContent!==text)voiceHudEl.textContent=text
 }
 function disconnectRoomAudio(session){
@@ -2723,9 +2896,22 @@ function disconnectRoomAudio(session){
  playback.element.pause();playback.element.srcObject=null;
  session.voicePlayback=null
 }
-function answerRoomVoice(session,call){
- if(room!==session||!session.connection?.open||call.peer!==session.connection.peer||
-    call.metadata?.channel!==roomLabel||session.incomingVoice){
+function getVoiceLink(session,id){
+ if(!session.voiceLinks.has(id))session.voiceLinks.set(id,{id});
+ return session.voiceLinks.get(id)
+}
+function closeVoiceLink(link){
+ link.outgoingVoice?.close();
+ link.incomingVoice?.close();
+ disconnectRoomAudio(link)
+}
+function answerRoomVoice(roomSession,call){
+ if(room!==roomSession||call.metadata?.channel!==roomLabel||
+    !roomRoster(roomSession).some(player=>player.id===call.peer)){
+  call.close();return
+ }
+ const session=getVoiceLink(roomSession,call.peer);
+ if(session.incomingVoice){
   call.close();return
  }
  session.incomingVoice=call;
@@ -2737,7 +2923,7 @@ function answerRoomVoice(session,call){
  call.on('close',cleanup);
  call.on('error',()=>{call.close();cleanup()});
  call.on('stream',stream=>{
-  if(room!==session||session.incomingVoice!==call||!audioCtx)return;
+  if(room!==roomSession||session.incomingVoice!==call||!audioCtx)return;
   disconnectRoomAudio(session);
   const element=new Audio();
   element.muted=true; element.autoplay=true; element.srcObject=stream;
@@ -2752,17 +2938,32 @@ function answerRoomVoice(session,call){
   else gain.connect(audioCtx.destination);
   session.voicePlayback={source,filter,gain,pan,element};
   element.play()?.catch(()=>{});
-  updateRoomVoice(session)
+  updateRoomVoice(roomSession)
  });
  try{call.answer()}catch(_error){call.close();cleanup()}
 }
-function updateRoomVoice(session){
+function updateRoomVoice(roomSession){
  syncMicrophoneTrack();
- if(session.voiceSupported&&localPlayerPresent()&&micReady&&session.peer?.call&&
+ const peers=roomRoster(roomSession).filter(player=>player.id!==roomSession.id);
+ for(const id of roomSession.voiceLinks.keys()){
+  if(peers.some(player=>player.id===id))continue;
+  closeVoiceLink(roomSession.voiceLinks.get(id));
+  roomSession.voiceLinks.delete(id)
+ }
+ if(roomSession.round)for(const {id} of peers){
+  const participant=roomSession.hunt?.players.get(id);
+  const pose=roomSession.hunt?(participant?.status==='active'?participant.pose:null):roomSession.remote;
+  updateVoiceLink(roomSession,getVoiceLink(roomSession,id),pose);
+ }
+ else for(const link of roomSession.voiceLinks.values())updateVoiceLink(roomSession,link,null);
+ updateVoiceHud()
+}
+function updateVoiceLink(roomSession,session,peer){
+ if(roomSession.round&&localPlayerPresent()&&micReady&&roomSession.peer?.call&&
     !session.outgoingVoice&&performance.now()>(session.nextVoiceRetry??-1)){
   session.nextVoiceRetry=performance.now()+4500;
   try{
-   const call=session.peer.call(session.connection.peer,micStream,{metadata:{channel:roomLabel}});
+   const call=roomSession.peer.call(session.id,micStream,{metadata:{channel:roomLabel}});
    if(call){
     session.outgoingVoice=call;
     const cleanup=()=>{if(session.outgoingVoice===call)session.outgoingVoice=null};
@@ -2771,8 +2972,7 @@ function updateRoomVoice(session){
    }
   }catch(_error){}
  }
- updateVoiceHud();
- const playback=session.voicePlayback,peer=session.remote;
+ const playback=session.voicePlayback;
  if(!playback)return;
  const audible=localPlayerPresent()&&peer?.present;
  const dx=audible?peer.x-player.x:0,dz=audible?peer.z-player.z:0;
@@ -2839,20 +3039,26 @@ function readRoomPose(pose){
 }
 function updateRoomNetwork(){
  const session=room;
- if(!session?.connection?.open)return;
+ if(!session||!session.host&&!session.connection?.open)return;
  const nickname=cleanNickname(roomNicknameEl.value);
- if(nickname!==session.sentNickname){
+ if(nickname!==session.sentNickname||gameAssetsReady&&!session.sentReady){
   session.sentNickname=nickname;
-  sendRoom({type:'nickname',nickname})
- }
- if(gameAssetsReady&&!session.sentReady){
-  session.sentReady=true;
-  sendRoom({type:'ready',voice:true});
-  refreshRoomControls()
+  if(session.host){
+   session.sentReady=gameAssetsReady;
+   syncRoomRoster(session)
+  }else{
+   sendRoom({type:'nickname',nickname});
+   if(gameAssetsReady&&!session.sentReady){
+    session.sentReady=true;
+    sendRoom({type:'ready',voice:true})
+   }
+  }
  }
  if(!started&&localPlayerPresent())sampleMicrophone();
  updateRoomVoice(session);
- if(room!==session||!session.round||session.connection.bufferSize>4)return;
+ if(!session.round)return;
+ if(session.hunt){updateHunterNetwork(session);return}
+ if(!session.connection?.open||session.connection.bufferSize>4)return;
  sendRoom({type:'state',pose:currentRoomPose(),world:session.host?captureRoomWorld():undefined})
 }
 function receiveRoomPacket(session,packet){
@@ -2869,6 +3075,7 @@ function receiveRoomPacket(session,packet){
   return
  }
  if(packet.type==='start'&&!session.host&&!session.round&&gameAssetsReady){
+
   beginRoomRound(session);
   showRoomStatus('Hostitel spustil hru. Vstup do ordinace.');
   return
@@ -2962,17 +3169,36 @@ function updateRoomPetr(dt){
  else updatePetr(dt)
 }
 function playRoom(){
- if(!room?.ready||!room.connection?.open||!gameAssetsReady)return;
- if(!room.round){
-  if(!room.host)return;
-  beginRoomRound(room);
-  sendRoom({type:'start'})
+ const session=room;
+ if(!session||!gameAssetsReady||session.hunt?.winner)return;
+ if(!session.round){
+  const roster=roomRoster(session);
+  if(!session.host||roster.length<2||!roster.every(p=>p.ready&&p.lobby))return;
+  if(hunterModeEl.value==='hunter'||roster.length>2){
+   const players=roster.map(p=>p.id);
+   const seed=crypto.getRandomValues(new Uint32Array(1))[0];
+   const hunterId=players[randomHunterIndex(players.length)];
+   const round=session.serial+1;
+   for(const member of session.members.values())member.lobby=false;
+   beginHunterRound(session,seed,hunterId,players,round);
+   sendRoom({type:'start',mode:'hunter',seed,round,hunterId,players});
+   syncRoomRoster(session)
+  }else{
+   beginRoomRound(session);
+   sendRoom({type:'start'})
+  }
  }
- if(!room)return;
- room.entered=true;
+ session.entered=true;
  enterGame();
- showRoomStatus('Společná hra běží. Esc otevře lobby.');
+ if(session.hunt)hunterHudEl.hidden=false;
+ showRoomStatus(session.hunt?'HUNTER · Esc otevře místnost.':'Společná hra běží. Esc otevře lobby.');
  updateRoomNetwork()
+}
+
+function randomHunterIndex(length){
+ const value=new Uint32Array(1),limit=Math.floor(0x100000000/length)*length;
+ do{crypto.getRandomValues(value)}while(value[0]>=limit);
+ return value[0]%length
 }
 document.getElementById('roomCreate').onclick=()=>{
  const code=Array.from(crypto.getRandomValues(new Uint8Array(6)),byte=>roomAlphabet[byte%roomAlphabet.length]).join('');
@@ -2995,8 +3221,544 @@ document.getElementById('roomCopy').onclick=async ()=>{
 document.getElementById('roomLeave').onclick=()=>leaveRoom();
 roomPlayEl.onclick=playRoom;
 
+const hunterSize=5,hunterCell=4.6,hunterOrigin=25,hunterHealth=3;
+const hunterStatuses=['active','escaped','caught','left'];
+const hunterHudEl=document.getElementById('hunterHud');
+const hunterLightsOff=new Float32Array(20);
+// Baked surface images: Fluorescent pendant light (CGTrader 3306555), Ceiling Light by ch2018-1395 (CGTrader 4742654).
+const hunterAssetTextures={"hunterFixture": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAgAAAACACAIAAADyNUZcAAALn0lEQVR42u3d/XNU1R3H8e+5556b3WwedglPKUgAKaMyo9WhgpZQqqWOOlbr2HHa6V/QXzr9pzqO1aktRdBKtUSrpq0FJfUnnxCQRKJJhGT33nvu6Q+XLDe7mydQyN59v8Zxkn2QcHM9n/v9nnPuqt27hwQAkFNa6+YHrbUi4nN0ACCvgiC45+67GzIgDMMzY2NhGOqBgTLHCAByOfrfd++95f7+roU8rSuVysTEhMcxAgDJY+dnz113BUGwRF+IAACAfDLGLP0UcwAAkN8M8P3u7qI0zQCHYUgFAAC55XnLjPAEAAB0akJwCACg0xS6uoQ5AADIt+Y5gGq1lm4EowIAAOm0hUBhFBEAACBMAgMAmAQGAORad7GolCIAAIAKAADQSVgGCgCS31VAfrFYdM41PPjN5cvOOSoAAMgnpVTDF0ILCAA6NgwIAAAgAwgAABBWAQEAOqMI6O3t8ZbdKAwAyGsjiGWgAJBnvq+z1/rOie/7cRwrWkAAkFeeUr7ve55unv69fPmKTRICAACYBAYACPsAAADsAwAACDeDAwC0eRHglJL+/j6tNRUAAHRWCggtIAAQWkAAgLzS2tNa179NEud5WiSmAgAAyXHH3/O8bM9HRJxzzrmZmRlrLQEAAMJGMAAAAQAAIAAAAAQAAEDafWZYKdVf7mcjGABQAQAACAAAgLATGADQxtf4nuf7C7r91iZKqempaTaCAQAtIAAAAQAAIAAAAAQAAIAAAAC089IgVVlXYScwAFABAACEjWAAcicwRpRa1VvCMOS4EQAA2ltPT+mhQ4eCIGh+qqsraPmWOI6PHntliQwgHggAAGvpMr/VEB8EwZNPPF4qlTzPa/WJ4XqxwuA3v342++3MzDfZeHj5+KuZDHBhGHH8ZU3e+dnzVPZX75wodfV3TgAAeRjl08cPP/wT3zdNl//dxhhrY2tbvKtWSwqFQsPnhtezQWtd/3b9+oHss7946ufVubl6NfDaidevzM7y22m/CqDeHLTW2pbnCNA+GoatlViDZ/4yo7wx4hYM8Uni0r97y3dduHDxjZMnW16kG2MOHviRMabl9ePg4ObsWsHsf7/c32d7SvMXle7RRx85dvzVKIrW7CFFiwAIguCRwz81xiQuuXDh4pmxMZckHBe0a83reXfdeefWLd9r2e5oKT3z//Peezd/wFr5KF8f4pWSIAistc5lR2qZnpmJwvD1f5xs2Zp3ztWHZmlq5b924u+qVRtI+/rggQPZbBgYqGTDIHuQN6wfeOLxxxKXpH/c55+fP/3++/VDSh6s3QqgUulPT6krl2d//7vfrvbqCVg7YmtHR/9bqfSv/DS21k5OfnVLWvPZUb4+xLcc5dMhPv26Ojd5cmQkbB7QnQuj62nER3G8yBPRidffyGaDWmS6IAiCp596olTqFhFREhizrlIe2nabE9ecB9l/49YHgDHGGON5XhCYTZs2BoHhuKBNhWHka88Ys/IA8DwvMOYmXM73lK4N8c2jfHaIX2qUX/Jy/tsP1MWyoamMeO75F6+OKVrv37dvaGhrT9ogqufB0G3iXOJkYnwijKJTp083JAGRcGsCQM/bsWOor7eHCgDty/ih53mrmgbQWm/fPlT8179vZF1jEAQ/O/xwf19vdojPDvTp11NTM9mnJienTo6M1C/AnVvw3jiKEucW+5nX2pGvD9+JtW+/++47o6PzeeDt37d/27Yt5f6+NG4r5X4Rt+22rSKSODcxMWFtUqvVzoyNsbRUvtXJsBUFgOd5aS8vbeqtvHkKyNr7/CMRtdrTuFTq/tWzz9zgFXHQ1eUpNTU13fzU+PiXVwfHpnj44d69ad88jYAFV/pJ+87ESH1ZkaeUUurcuS/S7pFSnojzPG/LlkGttXOuUu5Lm0u379z+xcWJNEjiOC4WCi4TiZ5SjSuVHOf78stA2QcALK9QKKzkZbXaYpeoLgpDY0zP/MKYhoDhCEurxtHZs+fjONZab906WKmU+/p66yPXlSuzF74YT/PAOXf7rp0N9y6jZbRcTZacO3eBAABWMrLXln2Nc+7LLyddq7ZMGEUjI2+GEZuhVidJEuecUiowZt+++9OL/DQPent7dnV3izgRlST2o48/zY74Sqmrswjzv45su8zauHk/xIoumeulhXPRyuY/bhVjTKvre5VpAXk/uPue5QMgiiLf99NjWgtD5gDQ1heVziVRFKnV3PcmDMM/PPfHFTeg3SITszHHX25gtvnkyJv1wb0hD3bs2Lb7+zsb3rJly2AcRdVqLY3kqalpNb+f6fQHHzz4wH5/9UOZp7WIhLUwjuN3RkebO363ZJbCGF8pr+HOTsPDB5oXLwSBqU84JYm7dGly6daQb6396ONPd2zfls6bTU/PEABoX1EUx3H0ySdnt24dXPmZHM7jAK6FaeSGPPC1tvaBXbt2Zn+hWutyf18Yhn19vXNzVREplbrjOO0XyfoN69V1/Qzd3UURkV4xxmza9Hih0JVt+sWxffn4Kzf5VCkUCocODhtjrv5sIiJSLBaKxWLz/u3sXR+stWkANJSsWnubN288e/Z8vQKIa7VQa+156vz5i56nOBfRvoNIbJ2IrdUirS23vcxBHlhr3/rn24lz2tP1IWzDhvXpmpW0jyTXbm8jSonx/Xj1DZwojuvrawuFQrFYnB9nr9V5zzz9ZBiGf/nrsfScue4zx/f9hhq1cY5bKREJjH9weDjdj51d15D2bGTJTmb9AI6Pj2/evGBH97UKIH1PunQhiuMXXnwptlSykLZdBaTvvOMOY8zU1NSq/s9nA/xaVgvDkTffym5Iq4+GWuu9992XFgddXV2ZWjBabd68MzqadpOM8Q8//JDv+003uVO9vaUgCJ795dNzc9V6QSDLTR01PKI9b3j4gFk4iDcUrKVSuprAFQqFKApFTPYPSlqdrlEUHzl6rP4yrfX9e/c2VwALUmb37qH02j99XRwz+kNysPx5VYUsZ34+FrxnJ36cczfSgwoC09xgCYLgoUM/DoKgUOgqFou+r5cd/a1NJiYuNU1IuY0bNzasVG5Y45Q+G4bh8y/8aeV1RvaVWusDDz64adNGrb2GezpZaz/77NyRoy/787fp4CxCrloHnNKdOXkg396W8pbD6/FXXhWlgiB47NFHAmN6e3uylxEtLzsGBzc11wTNr2z4W1Sr1ZswO8UyUABYcTBEUTouv/TnI4ExBw8O15fiaK2zN8tbYtlY8625wzA8cvR4y4H+O52gIgAA4HoWHIdh+LfXTtT7Ttrz9uzZ07z2rGFFsrX2zNhYc9VyS1YiEAAAINe77HhBp+i/p07JLepZEQAAIDmbjfhOcd83AOhQBAAASOd+HgAAIH/cvCRJslPR6T34qAAAQGgBAQAIAAAAAQAAIAAAAG3m0qVJaxMCAABAAAAACAAAIAAAAAQAAEC4FQQAoG2tW1cRcdYm2c/ItNamnypMBQAAQgsIAEAAAACk7e8GSgAAQIf66quvk8QtlgQEAAAILSAAAAEAACAAAAAEAACgnZTL/Uoplf1EYBERSTeCsRMYAPIsSWwcxws/FN5RAQCA0AICAOQY+wAAoMN2An/99ZRz4lzrXcEEAAAILSAAQAfdGogAAIAOzQACAACEFhAAIFdLf3p7e5qLAOeSOI7FOTaCAUCexXEcRdHCDKACAIDO/mQYAgAAcmt65pslMoAAAABhEhgAIOwDAADkPANYBQQAHTT3m32QAACA3OouFqMorlarDY9HUZw4RwsIAIRJYACA5H75PwEAAPl3ZXaWAAAAEAAAILSACAAAyLXAmFbBIFEUOe4GCgD5rgCiKJqdnaMCAIDOUq3VhBYQAIAAAABhEli4FQQA5DgAtNZRHDfPAURxTAUAALkVRVHDh0EKLSAAyD1r7f8+/DAMw8WeFRE9MFDmSAFALjNgcnKyXC7H1tbCsP7P7NzcqdOn4zhWu3cPcZgAIK+01otVAP8HlT3vG605TN0AAAAASUVORK5CYII=", "hunterRoundFixture": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAABNyklEQVR42u2993dc15UueNJNlRNQAAgwi5KViEDkyCTJqe333syaNf/erFkzs+ZNt91O3bZEkUQGCIKkgt1WYESOVahww0nzwwFKRQQSpEglnm9hySCwcVFwnX12+vbe8MyZY+C7AsYYQoAQ3vstIYSUknMONDS+Q5Dv7DeZptlx7pxtW/X1WYwf0wFK+dLySrlUmp6Z0Tqg8V0CfTcXvzr94XBYyt3f5Vysrq4CKUPhMCFkl25oaLxUwJftAqmjb1oWZ0wIMXXjxj4vAoDu7m519AXn45OTvu/r90bjx60AGGOMsbr4y+Xy1I0bnPODPByMMcG4u7vbMs0gCMYnJxlj2h3S+LEqgLr4LduWQlBKp27cCILgqT9lmaYyBYxSCOHE1JQ2BRo/MgWovvj9IJiYmGAHX/zaFGj8pBRg++K3LCnl4S/+J5gCICXjfHJqSquBxg9dAWzb7u7sxBhLKUfHxp7p4j/IFPT09DDGLMsql0oqitDvmQb4odUBTNMwiHHp4vkgYAAAxhiA8IU82fO8RDzueZ5lWaZhcIyCgOq3TeMHZAFCIefyxQsY41AoVCgUy2VXfT2Xz3/22WdciOe5/hFqbj4bCUeEEJTSW3du/+Ln77tlD0Lw4ZWPK79CQ+P7VACMsW1Zly9fjMeim7mtj69eC4JACIEx7u3pcWzbts1kMvEcT97czBmGsbq6Pjo+rrx/0zQJIb/59S9cz//bh1d839fukMa3B06nE+A5PX6rrbWlpfndcDi0tVX86KMrpXKZcy6E4Jyvr601NTXatm1Z1nM8XD1kZGy8VCpJKQEAnHNK6f37D956842mpsb6bN3y8hJjWgc0vnMLsOfivxoEQbVrbhByfmgwkYjPLyzO3rr9rFe1QUhPd1cmk3Zd7y//+dddeSRlCv7l17/wtCnQ+O4tgGma59pa91z8YpcHf/rUKULw8OiY67r8GUEpXVxaOnniOCH4n198uet87zUFi4uLWgc0XnoWCGNsGkZzc/OZ105u5rZ+/4c/7br4v3moYUQiYc7Fc5/Lyg8aBtm3klAslf71d38ghPzqlx/0dHdPTk0FlGo10HhZFkBd/K0tZzOZVKFQ2vfirzgwgwP9jmPPzy/Ozc/LvfzPQwBBWF9fH4lEjjYdvXvv/r4ne9sUPHjY2nL2aFNTfZ02BRovQQEwxpZltba0vH7mVNn1/vq3D//5xRfewRSdiv8zMjb+fGVgFQQ/wQsCj/US0C++/Or+g4ctLe+mU+nFxUUAwPNpnYZ2gfa5+Fuaz9Zls6Gwk8ttffTRlbL7lBz8t/d/DukFVRAEQRAEf/7LX3/58w+6uroghM9KQNLQFmD/u7/93LnXz5x2D3Hxv0D/5/Be0C5T8OVXXy8uLnaca82kM9na2oXFRW0KNJ6/I8w0zZMnjxUKpSsfXy0WS4fkIGCMOee3P/nkW17AlLHR8YkgCAzjsJF6EASM0rW19SNH6uLxGHpBdAyNV1EBCMad7e353BallDJ2WI/KMCKRcLUD86K8oMOrzcjYeC6XF0Jf/hrfQgEQxqlUwjCMK1evHTKWNQjp7+0hhBxeYQ5zoAkhly9eNE3zkD/iuu5HVz42LQMhbQE0nlcBVIcuY4wd+jRDhOLxWBAEV65cfe78zy6XRj3q8BagojZKIfUbrPE8CkAI6e3ulhIc/vqv6Ezl/L0oC/CsXpBSRoLJhQvnD283NLQC7G5r3Gb2A/B9+T/P7QWpV24Qoo2AxjMrACGkr7c3FHK2tgri0Gz+F+7/fBsvKAiCK1evSgnODw1oI6ABnrUQBiHc2ipMTU8/gwUwjBfu/+zxgozDqxZjfHVt3TJN8VwdORo/GTxh1BrnnOw/wRMA07I6Ozoq/SjgaQXj9y9fJISUyuWX8TdQymzbev/yxT/95T+fqgPKf2s+ezYaifi+jxDSh+BVPv3NZ89Wbuddp3/21i20j//T0xOPxzzPQwgN9Pf3dnc/1YswDSMaizLGrg+PvkD/p+LPfHzt+srKWjQaeforMc221taBvj7HcXzfT6eT/b29REcCrzBs2w45TjgU2vURcpx9YgCEUCwW5ZxPTE0Nj45yxiKRSH9vr2VZ+5oSgnE4HHr/vcuObScS8QtDg5FIxDSNF/gHhBznXGvryZPHPM//za9/EYmE91UDNYG0+ezZZCJBKZ2YnJyYmuKcx+NRbQReZQuAESIHAO7lApmmefrUKQDAP7/4MgiC+YWFbG0tIeTo0aNH6usXl5aq3SHHsft7+959951oNMw5LxRLsWj07bd+dqThyKNHj759MIAxDofDv/3trx3bLrvehx9+dKSx8Z233zp+7OjDR48oZdUvu7Wl5cxrryGMGWMTU1NBECCETp8+DSH4+u499qIjE40fQYBLSF9vL8HYNE1CMMao+kNKef/Bg8cUgBDS39sbjUZ93//67l3VnzU3P//w0aOG+vpIJHKkoWFhcVEdTcexP3jvcjKZwBj92+//ePvOJ//1zy/++cWXp0+dwhgfPdo0NzcPAeDPG4M6ttXT3d3d1e4H9K9/++jv//ivctm9/+ChbTvhcPjUiePzCwsAQBUcq4s/CIKJqakHDx9Wjns8Fksk4pl05tHcnI6GX0EF6O7scF0XIQT3EMM4F/fv339MARBCp06exBh9eOVjz/PUF9XeisWlJWUKjh071tTYePrUqXfeeSsWjXDO//2Pfy4WS0pbgiC4d//+0aNHE/HYsWPHjp84Nvdo7llNgbr437t0qaGhjjG+sLgciURWVlYAAEKIpeXlB/cfHD9x4uy7b7926nQymTx14mT1xV9hgEop1zc2Tp08YdvWl199rdnRr6D/89Zbb7mua5qGmrxfDQnkvfv3yK5UZjgcAvvVv4IgGB0fVxVi27ZTqQQA8n/+6+8VF79aslgs/eU//mqa5m9+/UtC8OVLFz66cpVSGlB6uIvf7uzoOHasMQjo3NyilBIjFI/Fujs7hRBCStd1P/v8848+utLW1vra6ZOnIyfu3n2g3P29R5xzLiRAEOi1A68gpBBLS0sEE8Mw9saBXAgA4DcWYK//s/txUnLOl5aX21qbTdP4t9//sVgsHtSs+BymAGMccpz337vc0JBljK+vbyijpPRVRS0GIaZh1NbUzC8uzi8sRCIRQoxrw8O+7x9E/dde0CsLIcT8wsLRpibbtva6QIzzr77+muw6gkEQPJn/wzm3LFPZhCf/+mcyBeriT6dT8Xh0aWlFCIEQhhAiBNVLl9sACCFCSFtLy2d///zE8aOq/eAJr/bOJ5821NfpXNCrCc45Qsgw9tk8xDl7LA1akXiBCZMgCIrF4r//8U+e7ycS8Z9/8P77719W+dfHPP5Q6IP33ztx8phpGktLy1ICjLFhEMPYm7nC6ovhcLilueUwNIcgCJaXV59cEdR41akQGOOz774bi0VfxkKKJ5gC27K6OjtratLRaOThowUIJEKYEKRCFghh5dqueDiMMQCYlAQeuuGLcY4xPvvuOzdmbupQ+JUCBABCYBjG3mKwuuhJhfyTiMc558/Ef34mUxAEwb//8U+XLl5QpiAIguvDI0ODAxijUMi5d/8RkNIwDEKwClkIIQjtVgDlBqmjX1GACne1crh3Xfaf//3vRxrqGurrTNM86K/TivGqW4AX7v882RSYpvGrX/4cQvC73/9RSNnW0mLbNkKoKurF6vNKQLOjAGAn4QPVK+9sbw8o9X3/088+U+e4taVllw6srW9ka2vefustjPHeUJgx9tnnn3M9SOKnaAIQQoZh7GUnBIGxrQAv1f85wBT8+X/9H791HOf/+D//71K5bJomqgLGGGNlARAhFQWQAABKqfoKhLAS04ZCIUdKKeVgf7/v+7O3byfi8V38H9fzlOSuCKRiAOOxmOd5N2/dehkGUOMHbQFetv+zrxqojJP65N133lFuj/J5EIIYY6UMhGz7+mruNCFEfbJzkUMAJCFYaYuUUohwV0d7PB7b9RvD4RCEqC5be9AdbxgkFHJaW1pu6GXd4KdDgSbEqK3NYIz2xgAYo28swHfg/4AnUjjhDnbZgUoRG0IohJCSKWWoyEsJIISqfqc8JQih49h7696Li0vZbI1pGvumg0zT8P1gX/ug8eOCaZpn331XvcuV+PAJ00+wkv4e6WJwDyrWQOWClPevdAAAoDREhcUQQoyxip4BAEFAHz6aS6VO7/qzOecIY8756ur6iRNH9/6fQilThsWyLM2c+xG7NBi3t7dbO/lxjJGKFQ+URxAm4nHbtv724Uc/NPe36pqXla/s/QRCqLwgpSEIYdM09x7x06eOLywsZzJpZ79rXkpJCLFt+3//3/4XXTH4USMIaOXQq7PhHBD4AQAIRGjbf/gBD9Gp1oG9OZzqrCgh5I3XT+/bAbMjBvYtIFS++1SjqfGDDwDEswXBjDHOxYXzQ3/92/dsBKqJnFJKIcS+DJ9dX1SSKjAIguDuvQc/e+PMXhdoaWnFcWzX9Smle4+4+o2M8a+/vq/P0I8asVhUZUGKxRIAIJ1OPkkBFPnn/cuXvsdBmrJC9Nk5zepf6vOqCFhW/7da3vcDtS9MCJFOpSil9HHGkZSAcwEhTKXie7+rYgBKWRAEo2NjOgv0o4ZhGB0dHQRjAEAsHqucIvD4+l11fkh18scg5HuxAJRSadvVJ1vd6AjBigLsfFGoNGiVzkjOuef5CCHOOediaXkZImQaRCV/wDeZUEdKUC574ADmoO/7vu/rueo/djDOR8fGIAAI49aWllQy/vRKMGMsFApduPAdeUGmYXDOHccxTbNYLN755JPuzk5CiBBSCCGE5JxjjBnjQkjltavTrhRjR0wAINUEFM7LEEIhpOt5n372WTKRoI/PEaKUhcPhYrF4UL8yY6xUKk/rZfTgJ0ICVf9z55NPXjt90jTp3rT4ysoakJLsjJG69v7lS9/BHDXTNE3TfP/yJVXJ+u2//PL3f/hzZT1eZUEqQpAxpooAlURQxZYpYVUbVgYkCALOOWXs1u3bnPNCobDLyw+FQlIK13Xd/RZ8CCECSmd1GfinqgmHsQDfgRcUDoU++OC9eCwqAfA87y//+bdffPDe//hvvwFAPppbVDUsReBWFS4AuCrXVRRASqnsg1IB9dj81tbtO3fUn6r+Oz45Wc0HDIVCly6e55xP3bjx5FYHfWJ+eqCU7l1tQSkVQkggSbUP8PK8IIKxZds/f/9yKpUsl8u//8OfFQ/i3373h4729mPHGo8fa3z0aAEAyRjfITUICKEQSOmAOu5SSjWoS6mBOrWffvbZrhdcfZQJIR3t7Qjhzc0c1ZskNfa1AC/VC3Icp7e7O5VKRiKhcrn8+z/8SeWnAABl1x0ZG5uZdX77L788erTJ972NjQ1KmZpaoUrCQiBlGaoUQHDOK1brqWdadY2NT07qEu+raQH2sjw551ICIAHZ1R9wSC9o3wWpT7j4k8mE67r/7//3u71N9JzzYrFYMQV1ddmlpVV1x1f3A1R+r8oCMcZczzvMdW4Yhsr/6Ltf4ynDcQ/jBanbdGFhmWD8ZC2xLKu/t1dd/K7rVl/8e1FtChoa6jzPW11d4/yx1haxgyAIPN//5xdfxKLRWCz6hMKtGmNhGGb55Qwt1QA/9KowoozjPTGAOkiyejKcmoF14vgxjNEXX361975UnLOW5uZ4PJZMxo8cOTI3v8A531usJRjbjt3X01NXV4sw+rff/eGTTz93XQ88rRwWBMFXX911nFAyGXccp1wuV1/56uiXXffm7OzmxkZ7e1s6nY5EQiEnvLi0tO96YELIO2+/yTmvnnSk8SpNxm1OxBN75yFIKX3fv//gAdnbJbmvF6RmD2KMbctaW9uIxaKJRPy///bXDx/OT0xO+lXCOxd/wgk5nLF/f+LF/2RT0NTU6HnewsKi6/lSSkrpp599hiA0DOPSpQuxWBRIsLCwbJhmd1eX7/t785jfO9Nb4/tVgNfPnC4UipSKvRZA3d1kbz1olxekyGGtLS3JRMLz/dHxcZWpNE3zN7/+xYkTRwEA0zduqGEnGOP+3t66uloJ5L/+27/v9fjB4XK31VFBpiajXkwQBJZpdLR3pDMpyzT/7Xd/CIJACIEQaj57NhaLtba0zN66VSkpaP9HA2HEOd+XHKlqSo+NRtzrBZmmea6trbGxMeQ4nPOxiQnf95X2qNFXjUcaa2oyb775Rk2m9uSJE0ebGlOpBMJIXfzfJu6kjD2am/vyq7tvvvnG8WNHT506OT83d+nSxdraGozgH/60PY9RvZjVtbV0Oh0JhxsaGrLZ7Mrqqvqztf/ziluAY0ePUsqkFLvAuaCUPnz0aPd0aAjhmde2JyojhNTFLwEYm5i4d+/eLg5ZENCv79774suvTp86JYRMpRKhcOiPf/6PTz97uscPDkeSC4Lg66/uJhPJ+vrssaNHbcv8/R/+tPf5anrpo7m5TDqdiMfr6+oWl5Ywxq+dVpOuv9ApIPBKloEfPHjQUF9fnUGpgFL6aG5utwJgjE8cP44JicdiDQ0Nj138+zGTlSm4/+Dhmz97w3bsP/zxz4VC4cWeNsrYyuqq44QzmdTv/v1PB81jVJMbV9fWUqmU4zgNDQ0NDQ3RaNT3g30nPWq8CpBSNh45sr8CMDY3P79bATjnDx89SiaTkXAEHHDx74uTJ04AKS3LWlhclC90STvGuK2lpa4u67ruf/3zKXf5til49CiTTsfj8UKhcH1k5DuYdqHxA40BEMpms1II/jgY55TSxcVFsi8v0jJNxvnUjRuHPDpBEHx45covPni/vq7uycM6n08B6uvrpBQfXvn4MCG1+gtv37nT1dlpGobO/7ziXtCNmZknTQ49yHBEI5F33n778M2BlDJVu33h/YQYY9WsU70S5jA/lU4lLcvUM3G1DhyE/fcEM8ZGxsZKpVJdXfbwp5lzvrC4iDFuPvvuC9QBjHHzu+9ijJ9py4aaNQQAuHp9WDOcNZ55U7zSj2faK8E5v33nE855Q339C1QABGE8HuOcP9P+bYxxtraWMab9H43nUQBlBArFsmrUOrwOvHAviOwsrXnGPUtSSnHl6lV9/Ws8jwJsxwcQJhKxfZcMfzde0PP5PxUGhL7+NZ5fAdSBxhh3d3Ud0ghUvKD6uhfjBT2f/2OaZktzCyHkBz3qSOMHrgCMsbGJCcuyIACH94KCIFhaWn5RXlDlIYe3AAYhQwP9r50+4Xme1BvBNL6lBSiWSo2N9ZcvXoxEwoc804xxQl6AF4QxbmlujsWihz/9pmmalpnJpBcXV+jhllJqvOLYXQneWxU+0tAAITz77tuxaGxlZYU9scilVvO+dvpUOBz56utvtZqXYPyzn71BCPnwwyuHobKFw+Hf/suvmhob19c3R8fG7t27zzT9QeOZOsL2olx2/+OvfyPEeO/yxZMnj6VSyStXr7ruk3oRlReUzWa/vQU4pP9jmqZpGL/4xfvLy6uTU1OB7nzXeCEWoNKGq4ijjY2NiXjs9TOvPdkUIITq6+pTqYTjOIuLS8/HC8IYn2ttra3NBJR+9fWTqGzq4n/ttVOrK+vjExPewQuDNTSeRwEqTIe79+5/8eVXjY2N9XW1jUca5xfmOd9neO0L8YIO4/+YpunY9i9/8f7KytrHV6/fvXeP6rynxktSgArzudoUxOOx5eV9TIGUMplIRKORr76++3zJeNMwjh8/ZprGPw6gf0bC4d/+5levnT6tL36NlxgD7BsVqE2Pv/7lB6dPnUwm9o8KGOMQwraWlpu3bj2rEXhy/Ut5/L/61c8BAH/+y38ecjiKhsa+gGfOHHu+n4yEw5cvXYjFopzzh4/mpqdnvCrudMhx2s+dq6/PRiJh8Mz0PbG+vmEY5KMrV/NbW7t+6a9/9XMh5MrK2tT0dHm/QZ8aGi/FBdqd7aFURQWvnT6Vra1taGhQUYFay9p+7hwhxLYt27bAs3fxFAoF0zSjkWhl3olpmo5j//pXPwcA/OnP//n13bua56PxfVqAXbeyaZqc8/n5JT8ILNNEGNMguHFz5pAz5PYsLAKd7R2maVLGpBC37tz+xQfvI4QAkH/8038USyX9zmn8UBSgMvT8Fx+8t7K67tg2Y2x4dFRNsf02dQCCcYsax+J5UoqpGzMqENdvmwb4DqgQz7T4ulgs/ukv/wEBUAuIXkhORgJgmWaxVMKEcC6eb8qQhsZLtwDVpuDdd96Jx2KqpebJ8/if/Jzms2dDjqOW+05OTurNRRo/AgWoTJLrOHfOcRzP86Zu3ODPeHZN0+xsbw+FQn4QTExM6KOvAX6AWaAn5HA450vLy/F4PBwKNR450njkyNLy8iEPsTr9hmkyxiYmJvwg0BUujR+TBXhuU6DkO9vbEcba59H40SvAQVHBQZLNZ88ahBDDmHx83LSGxo9YAXaZAiFEQ8NupjSlbGlpBQAwOjamL34N8KNLg4JDsOimZ2Y2czkI4a5WXc65Ov1MFQ706df4iVmAx2e8wb2j2oRagKcXlWqAHzwb9KVuLdbQ+Am6QBoaWgE0NLQCaGhoBdDQ0AqgoaEVQENDK4CGhlYADQ2tABoaWgE0NLQCaGhoBdDQ0AqgoaEVQENDK4CGhlYADQ2tABoaWgE0NLQCaGhoBdDQ0AqgoaEVQENDK4CGhlYADQ2tABoaWgE0NLQCaGhoBdDQ0AqgoaEVQENDK4CGhlYADa0AGhpaATQ0tAJoaGgF0NDQCqChoRVAQwPoNakH/yTGECEAgBBi3/2nTxXQ0PixKoBlWf29vbZtAQAKheLE1FQQBM8koKHxQwBOpxNPWOyOEEIISSkfUxpCBvr6amsz8XjUcRzTNCPh8OraGkIIY4wxNg2jr6dnl8Di0tKu5xz0fA2N798CmKbZ3dmJMd4qFD759NPK/U0IMQghBC8sLoccBwAQi0USifjF8+cl2D7HEECM0draBiFECYTDYYMQCCFjrPL89rY2y7J8379x86a2DxrfC+CZM8cO8nASiTjG2Pf9lZXVm7dmhRAYk+7ODkKIlDIajdq2xbnwPNf3KSYY7FzkEMIgCCKRSLWAlIJSOjE1zTmDEHV3diaTCaUAm5s57SNp/FAUAGPc09XV0FAXi0URQoVCqVAoMM6lkL7vz87OAgT7enrS6VQo5EgpS6Xy/PzijZs3K5GuYRj9vT319VmlKhUBBGFra6tlmfn8Vl22Nh6P2bbleX4+vzW/sDh765aOlTW+fxcIAmBaVqFQYowrCyCEgBAKKW7fudPd3YUJwQhhjO7efQCAzGTSjmP3dnft8qA45w8fzlcEBvr7OONjExM9XZ2maZZKJSmlsgDlctkyTf1maPwgFEACQIMgnUpGoxEphWWZKytrE5OTEIC2c20QQhWzUso55wBIKSWlbGRsrHJ/E0IuDA0KISsC20+W0vf98cnJt996O5VMRKMRwyCWZUIIXdcjGFdbAIyx+kSbBY3v1gJAaFmWaRqGQe7ff1BbW2tZZldnB2NsfGKSc44R6u7uLpXKKsYtlcpbhQKltHJSpRCu6y0trVQE1jc2b9+5wzmHELa3tQkJDMNwHPvRo7mmpkbP8y3L6u7qGpuYkEIwzlWIbJpmEAQ6RNYA330lWAhx9+59SjnGiHM+MjY+PDrmeR6llDImhYjHY+l0MpGISwA+//zz6ntaAiCECIdD1QK+7zPGKKVjE5M0CCCEQgjOhfKvgiCYmb0JAOju7opEIipETqdTyWSiu7PT1A6SBviu6gAQwmxtreM4rusCAGzbLpXKX339tcpgGoSYpvnGG68nEvFYLGrbFkYoEo4sLS3BqjrAG2+8XlubCYdDjwlsH3q+urZ2pKFheXkVALC+sUkMA0LQ2Ng4Pz+3vLxy5syZbG1NoVD0/cD3/UQiHg6Hl5eXdblA47twgTjntz+5cyE1mMlkAACe5/u+rw6fbdtDA/2EEIQgxujBg0dCiFQqGYmEhwYHqh9iGAbnfGFhqSJw6eIFytjVq9cCShljlLJUKmkYBqW0UCxOTE51d3YODgxICcqu63leMplQ3y2Xy9oCaHx3CoAxbjnbnEgkDIMghChllFLLNCUA3Z2dyq2HEHEuOOdCCBUEXx8Z+SYNSsjFC+eVLikBKSWAsBIim6YZjUXSqaSUEkIIIOCcX7t+nRDS39ebiMdM04zHY1IKVV0ulsr6rdL47oLgUCgkhFhcXEIIZbO1CMH+vl5K6fjkpOAcIdTd1WWaBudiOwje2toVBBeLJcexKwIbG5uzt28LziGEgwP9jm0bxCCEqCDYIEZrc/Pk9LTredeHRzra2+vr6wjBDx8uHD3ahBBCEO7KEWlovNwgWErJuVAfQsiR0TEVBAeUer4/Pjm5urquJDc3czcfr2ExzvcK+L5PGQsoHRuf4JxLKStBsJQSY2wYBiGEce4HgRBCCMEYV5+YptnT3WXbdsVGKej3T+OlBMF12Wwo5HieDwAIhZx8Pn/37r0KjUdhZXW1oaGBM3Zzdtb1vL2PPkiAMTY/P3/s6FGEULnsGgbxPN80jePHjh47dmx+fmFtbTWTzjDGLcsqlcqlUslxnBszN1tbmpdXVhBCrS0tx48ezWTS6+sb2ixogJfBBerp6lLuPkLw+vCI5/vVQUJvd3c6nVJs583N3LXhEa/qiB9GoKerK5GIe55v21Yul78xM4MQ6u/vwwhxzkOhUDQawRhxLgqFIgCwVCrNzMy0trZKKWKxGACAUlooFEfHx7UOaLxgOjTnfG19/UhDPcakVHbn5uerA1zTNN9882fJZCIWizqObRhGOBReXl6upkO/+ebPstmacDhUEVhaXkYQCiGUf7W+sZFJZwzDKJfdm7duua5LGXv48OGDh48ymUwiEY9GI4uLS+l0Kgjo6urq9MxMR/s5ymg8Hi8WS5xzz/Ns27r/4L56pobGC6ND27bd19Ot2KBRP9LV0TE2McE5t217aHDAIAQhhDGan18UQsbj0Xg8dvnSxWovSqVBl5dXlUAsFr188SJl9OOr1yillmV1dXQkkwnLMn0/6OroGB0f932fUiaEBFJCCCGEUgL1CQDAdd3R8YkLQ4MqQ4ox8v1ga6sghS4OaLxQBSAYd3d21tbWhMMhhFCpVA6CwLJMKcHgQD9GGAAIIeRcMMYOqk2pW5lzLoRUcQUAAEFECMEInT37biaTjsejKtOPMW5tbp6emeGcc85nb9/O1tUGQSCEDIJAceYIIUEQbG0VstnaTCalcq+UUogQ0C6QxovmAplCiLm5RYRgJpNCCA709anc0MfXrkEA+vt6I5GwOv1BEKyvb8zeulVxRTDBA319kUhYnf6KAISwp7vLsizTNBGChJCFhaX6+ixC0LKsygugQbC5kZMCCCE2N7eKxaJtWx3nzt26cwdjbBhESnn//qPGxnqM8U51QUPjhXaESSk550IAlQYdHhmljAEpKWMAgOsjI/19fQYxAADr65sqy/nND1N6kMD1kVHTMIYGByzLqkp0Kt4oIIQwxhjnMzdv9vX2Wpbped7k9LTv+xDC9nPnCCGqwIwxWlhYRghihAGg+o3UeJFp0JpMxjRNVcZCCOZy+bv37zPGKnc8Y3x+fqGpqUkIMTI29tjpf6KAEIIyNjc319DQIISklHIuCoXC+MQEgLCvp2dhcdE0jL7enmQyEYvFCMGZdPrho4e+76+urb1+5jXGmGIHEYKDgDY1Nc3PL+xK0WpogOcuhHHOZ2ZnNzdz6p+rq+tjExN7T1glL3RQFvIJAgFla+sbm5s5zsXmZm5tfSOgNAgC1VTw9ttvJxKJaDTiOHY0GkkkEi1nmzHGQRDk81u2bUejkVDIiUTChBCM8NBAv6qR6eqYxoupBAdBMDk9TRmjjI1NTOy94LfdFUo9z9v3zKnK7kECnPObs7PXR0Zc170+MnJzdlYpiVKzkONACDDGCwtLysuvkOFUDIAQmptbIISofhrHcc4PDkQikdaWluaz72rmnMZLnwznOM6lixdqa2vqsrXnBwcqJIXKMW0/d+6D9987SGCXWdhlIsquKyUIgoAxHgSBlIBzbhCiNJNSptoSymXX8/wrV68yxmzbHujrra/L1tfV9fb0VIfUGhrPXAizTLO7qysSDhmE1NfXLywsVDW8E8syB/v7s9naUMixLJMQEovGllceL4T97A3VNf+NwPIyRLASRViW1dfbG4mEdz1fSrmxsV6XzUKIKQ0AgIVCQUpw8uSJufmFhcWFumx2fX1TSrmxkQMAPHj44N79h6dOngyCACEkhHRdN5NO6/4BDfDcUyG6Ojrq6+sikTBCyPf9paWVsYkJwTkheHBw0CCEEJJKJdbW1qWUsVgsn9/a9VjTNBKJWEUgl8sDCBlj168PM84wJoP9fel0SjXFr69v7OJKmKbZ1dERDodLpdLU9DQXwiCkp7tr6sZMd2dnKpVU/pLrugDI68Oj712+ZBiGbVuc81KpvLmZ0xQJDfBt6NDhcCgUchBCCMF4PHbp4gVVoFXehdiGPDiLKlQpV93CEELTNC3TvHTxIgASQBhy7GQyoch2nPPW5uapGzcqRzYIgtnbt8+1ts7evu0HgTruY+MTPd3dyWQimYwrx2l5mV65eg1AKISIx6NqyFwQBProa3yrsSiEYNUPACFMpZJSCgiA3BnroBSAsW8Oaz6/NXVj+ptCGCaD/X3hcFg5IUEQuK4HANxpGAZ4ZyLi8vJKNluLENrltVuW1dnREQ45nR0doztZVFWCQAjl84VSqXTkSD3GWEo5NNCHMZ6fXyIEAwAKxRImRL+1Gs8/FsX3A9UPAAAIAiqEvHL1KqPfZEIRxoP9ferUrq9vqlpV1TPoteGRaoGRsTEpt9UDIdR89uzxY0d93+dcqLlD1T+uGi9TqaRt2xHPOz84UHGQOOcYo3g8VigUlL4xxq4Pj37w/uVoVA2i4xjj1dU1/dZqPGcQLIRYWl6qr6tDCKnzura2fu/+fcYYF0J9MMbmF+abmpq4EMOjI/sVwnYLVNprGONr6+t12SzGJAgCAGAul5uYmqaUAgBM07gwNJRIxBOJeChk27YthIhGovMLC5zzlZWVxsZG0zSKxTLG2PO8+w8eMsZOnjhhWWYiEQ+FQsrgPHj4UAfBGuD50qCu63187RqlDAAwN7cwMTW116v+NoUwz/OuXru+uLgkpVxcXLp67XolAuZcuK7HGN/YyM3NLaqhKZVKQkBpLpdfXV3nnOfzWxjjgb4+y7IghKGQc//+Q0op0f6PxrevAzDGJJABpTOzL2UulR8Ek1NTrutOTk35jz+/7LoYYxUcKzZo5QUorqj6p+t6H175eHh0tLe7S0r56NECpezBg7lSqcwY0yVhjRdTCDvogq+csIOO2lMF1JN3PZ9zfueTT9bW1guFIuc8l9taXV2v9BzbttXb3ZVKJdPpZE1Nure7i1E6PDqGMU6lEqlUIhaLAABisdhAf5+hTYHGcyvAk4+vaZrt584ZhGCEFFEH7C2ldXY9QaDy5L3f8n1/ZGxMBbKrq2sVLh3GuL3tXDQaTSTi8XgsGo3Ytq3KCwGlUoJEIp5Op1RsgKocJw2NZ1MAjHHz2WYEkUHIuba2XewatSHmaFNTJpOura2pq8vuFejv6ztypP4gAaUhXZ2dtm13dXbuHQ0dBMHU9LTrulPT0xX/BwJgmiYhZGMjt7q6RgipHHGDkHg8ms8XIIS2bRmGYZpmX1+vNgIaz6MApmnW12Wz2ZpMJn3saNNAX59t26ZhbH+YZiQStixTXcPxeKynq8upErBMMxIJRyLh3QKmoT4cx7lwfkhpyJEj9RfOD+0lCx3kNWGMMplkEFCVBiVV1/zW1paS4ZxqcqgGeD4qBCFksL+/qelILBaFEBYKxXx+Kwgo2NmABCA0CFY9kwCAjY3c5uYmY1xWbYhxHCedTlYENjY2H0tKQhgOOfF4TFEh8vmthw/nZm7erETDiowUCoXK5fLE5GTl67ZtXRgaSqWShULRcZytra0gCCanb3S2t6dSiXLZi8ejxVL52rXrFy8MUcqWlldu3b6tC8Ma4NkWZJgGhNAwiErMSykA/Ob8AwkgREFATXN7/H+57I2MjfGdngHDMFSPPKXbApwLhL5pXsQIKVYFIRgAC0IYiUT6+3rHxidcz7Nt+/zgQCqVhBAmk/EL54euXh9WeVJKWS6XV9WJldW1sfFxhFBvd5cQ0vN8x7GDICgVS57vf3jl6s8/eE/TQjWepxLM+fbETwjhdiX446uM0koZuK+nxzTNra1COBwul8vlcrmagSOkLBZL+XyB0g0lkMvlZmZvKqdFVYJPHD/m+z4Alpq8WywW73z6aWdnx8zN2bfefDMejzmOY9uWmrhYYQpxzqdu3AiFQh3n2qZvzKjgeHRsvLOjwzTNRCIGIRRCtra0fP755wAAjBHWMxU1wLOPR1dOOaVMLbH7+u5dulMJZozNzc/HolHHsX3fX1hcmrl5s7plTAgxPz+fTCYty6wI+H5QXQmur6vDGAshy+Xy5mZufHKqXC4vLy/3dHelU0kpAaXUdd1IJOz7fnVl1zTNrs7OkOOkU+nFpSXOOcLo7bfe9Dyfc5FMJpTBee30qUKhWFuTqa2pffTokZ4dpHFYBZBSrqyspNNpAIDrepubudGxsYDSXcHoyurqsaNNnPPxyUl/DxWCc760vHyQAGNsbm4uk06rlsjK5DlFoIhEoul0Ug1VhxCq2brzCwtSSuUdNTTUhUJOOByqy2YfPnoEAHz9zJm6uppcLp9MJkqlkut6tm2Vy67rugihew8eaAXQeIYskB8Eam9pEAQjY+Pefi2R34YKAQDwfH9kbNx13V3P9/3gzief5PNbW1uFctnd3Mzl81uzt29zzk3DGBwYiMfj4XAoEglv1wEAlFK4rkspq6/Pep7neb4fBFyIVCoF9dQUfccfjCeNRXnq+f722LcSrJhCH1+73t/bG4mEi8VSpRAmhOCMUUpXV9cRgul0StH1hJD5/JZhGIo1VCgUHdsaHh4Z6O9XcxQxxnpsxCt7+pvPnjUMY9/jN3vrFvphvm7f90fHx13XVSMTq3javmEYNTXpTCattm+ob6ld9moTvRACYfyzn/3MdV11+vt6ezRD7pWFbdshxwmHQrs+Qo7zJAtQrUOU0v2mQuBvKVChQuz73b32gXN+4+bNoXC/GjpNd0ZOtLW0WJYVi0Udx1FR8tLySiqZKBSKlmVZlikE157Qq+v/IEQI2dcZhk/iAiGkRtW2NjfvJTLYtj00OBgKhUKh0EBfr70n3f5UAbUIFULUvodq8QSmkOd5V68Pz88v5nL5lZW1q9eHXde9deeO49j5fGF1dV1tn49Fo1LKRCKu+hCkBLoz4BUEIaS3u/vJbID9p0I4tn3h/FA6nQqHQ+FwOJVMLS8vfTP0wbTODw7U19dFo+FQyCGExGPxx8ajm+Z+AlVPMMyBvt6amppYLOI4Tra2dmFhgVVd9jt7go2aTGZpeXmXHVhYXDjS0FCJDRCCr585o/g/8Xg0CGgulx+fmGhqbAyFQ0qTHz56pKsBr6ACdHd1eJ5PiCKOoeoPKeX9Bw/Ivj/W092dzdYqKsTWVoFzfvnSpWrTYRiEEByJhKWUvh8kErH3Ll96fEsksSwzHA4pgXg8Vv0E1b8Sj8ds2/Y8D2PU1tp6c3ZW+fTKa4/H445je54/2N83MjpGq6LY3eZMAillTU3asixVEmaMSQAoZVIC1/Oi0chAX++168NUh8KvHCBCSA1T2/UNISVEcN+pEMCyzIoTb5qGIj+AxzsMlWXZmd9fzZQAAACEcOWwKpHqn8YYq0Z4jJFlWQihaDRaGRgBwTYLIxIJh8MhQnBHe7uUUkipkqGRSNiyrMGBgeHhEdfzuBD5/JZpmmqodbFYNE2z+d13VeAbcmyMEEJYe0GvGqQQS0tLEKLnmQ5d7XJwLq5c+ZgyurNAgFw4P+T729vepZS5XF5N76mEvxeGhlQZa0dga2p6iu9QIdpaWo8ebRRCAIDVfBXOOSEYQqSOvkp6rq6uZbO1EELHsXelcVRXwMULF/720UdBEMzMznacOxcOhz3Pm7oxzSjr7u4qlkqRcFifg1cWlLGRsfGBvj7DMPZaAC4EAPtZACHk1lYhEomow+r7frFY8oOgkkoXWJRK5Xx+y/ctAMBmLj81PV29Bk9wvJ/AN9Wu2Vu3UqkkxlixQYvF0ujYGBfCsqyBvt6qrC3a3jEMoJqcXnlCLpc7cqTeskwVVDS/+24sFiWEWJbZ2twyOT09MTE5ONAPIdgqFGPRCCFYF8VeQXDOlQu034BadiAVYnl5OZ1KCyF8P9jY2NxFhRBSPpqbe3D/QUNDg+8HV69e27Ul8qkCUspkIqku/nx+a3Mz93BuDiH07jvvIISEEIRgNZyrXHZLpfLOur5tYIwxRrFY1HW9ZCKxurZ25rXTyWQiHA6prTbRSGR5ZeX48eMEYwghxggA8PXde5oQ8aoBIXTyxAnHsfdaAMbYF19+RZ7QsX7xwnnO+eh+VAjOeUUl9i2yPlmAcz49M2MaxuDgwPXhkYBSjHFLc3M4FMIYE4KLxSLn3PdNxljZ9RKJuIohCoViMhmvjEYMguDWnTttLc2M8bW1dYzJyZPHbNsKhULVv25rq2Dblp6S8iqGwABACAzD2FsMVsfye6NCcM4ZQmqrNgDgnbffDjkOxljlq+LxuDIFqrNMGQ0AQDweKxZLivLgeX4Q0NfPnLl955Ouzg5lFiAEylxUTN5WoRCLRoGuBGg8XxAMvqt69Y57g5QaIASDQFQUV3kvEPJwOLy5mQcAMEYRwpFw+J233zYMI5GI27blul6xWGKMtZw9axBCGfvHf/3XudZWiJCao3hQHCBfMvFJ4/syAQghwzBM09jTd278UBRA1atVOKterlIDSqlSCbVzqZJXjcdjQRAEAWKMY4xDoZDn+a7rKaNGKVXNDEFAAQBn33mHECKl7O/t3bEG+2UMKHU97/adOy9jCJLGj88CPDYW5WAmz3MLYIxVP7tlma+feV0lqiAECCEIIYBQKUVlPKNpIjUljlKq0jnKEYIQIoRM0xBCeJ5fKBQDSjPpVOU69wPfsizOmed5RxrqD0yZURoKhVqam2du3tR2APz4KUA7GXkjnU4954IMxWKoq6tbmH+MpwAAsC1roL9PxZq1NbULi4v8WQQwxh3nzr3xxushx2mor1dHuXL9QwjX1zc5YxDCYrG4uraRTifVWVfLtxGCAEDGOIQAQogQdBy7XHZVAC2ESCYTKsEKAEinU2vrG4wyAGAymbBty9wPKk8qhNBDRX/sME2zpbm5sbHxSEPDkYaGbLZGJdx3NQNQGnz62d/JvtrTfu5cTU0mHA5hjEIhp/9xHoFBSH9fb21tjW1bQkjF26meH/pUAdMwMpm0Iq55nmNZpVKprO5ypQyRsBMOhxVRQgW1le8qDgVCyPO8YrGkxkEXCkVFrBBCOI7jODZCWE1JCYfDJ443ffX1fQhhKGQfRI3yfaxMjWWaTFuAH69Lg3F7e7v1zVI5tDOX/9AuEEIwFouGw6FUKqG4QOFw2DRNsFNIMg0jHA6HQk4sFlWFqlgsapkmq5oKEQ6Ho9GI4gLtCBiUIcUzbW1piUTCyWTCskzfDzjn5XK5akXSZiqViMdjpmmEQs7a2vrDh/NHjzZKKVdXV2OxWDweBQCEQg5jvFwuq40eSh4hzNja4uLykSMNio6BEDRNMxqNlEpl0zQPUgApJaXUcZz/9tvf6IrZj50DVzn0EEJCsOLJ7+19f0oQrCSUbzI0OCC/GQu0PW2hQvUxTfPC+aHquUAVhvOOgHF+aGhnWwwwTVPlfKrKW1gRkIQQtm17nr+ysoYxqqnJKM9naWlZPa9QKJZKZYxxXV2tCo4Z4wD4rusRgo8daySEUMoePHikNhJ8fbeokr6MsR3m0v5/rPpmOOzocVo/aqjkx7cYiyKB7wdqJASEUE1zuHp9uNK2YhjGe5cuBgG1LK4u+GKxNFa1k6syF0hNy5JSFovlytIujFBzc/OJ40dVD1cQBKok7PsBIZgQUiwVa2vSivHGGFN6VVeXlVI+ejQfi0XUyCDGmGIQKR8pnU5W2KAYo8bGI2tr6wCAmpo0AGBhcTmXy6kw+iALIKVkjM/PL+oz9GOPAeLxGACgWCypg/FsCsAYG5+YsOwhtXfR94N8fivw/YpnLHfYl2poz2YuPzY+/hgXaEdArWxRApUNABSA27dvRyNhzoVygUqlktwBhLAmky6VSoxx27YUt/n48SYV3dbV1W5sbGxu5lQhzHU9CIGU0vO8XA6rXxcEQV1drZRip6dMCME917NM66CtxkrbGeOUUrWsWx+jH3UY0NHRoXKMakzOXgqM53nqYt1nNCLY7omxBvoHMMa5XG5mdnZXdtw0zXOtrYlEgnM+PDJcTXQ7vEBne3s0Gi2Xy5Qx27JU+t+yLNM0EEIbGzlFgGtqajAMQ/0ZnHNKmbrafd+3LEtKgBC0bXtzc9MwDM65ao+sXACOY29sbKqKQW1tBhxYmRZqSOPw6KhWgJ9AGhQCgDHu7uo6ffpUKGTvVYAgCP6v/+d/oiccCMMgCMFbOwspdk1vvnX7NsbINA21Suw5BG7cvCmkuHHzZsUCCLH9XwhhJpN2HLuurlaFp5RS5e5zzlVQrhwezjlj3Pd9CFUpjZRdz3U91902OOvrG6FQOBRyDMNwd76166NYLJXLZc/zi6WSPj3gJ0ECZZz7QTB144bve3QPOBcrK2tASvLcCzKeek0eUiAIgr//4x+d7e3KOVHXPEIQYyAEV6MOFVNBTXxQAxIVbVtKyfn2UN6amrTiTZRK5a2tQsXbQQipTJGUMp/3wcGFMNfzPvn0U339/8Q04UfABVLUUdM0VWir0jFqxzCltBK2SikZY5wLFY4rYcZYEPjRqFpbb6mgRbFE+3p6AAATU1OKCzQyOvrU6UD69P/0QCndmxeilAohJJDoB6IAytESQm2S5JxzdcopZVWGizHGg8BPpZKZTDqRiDmOvVUo3Pnk00KhMD+/9PDhHELQti1CCOccQGAY5GdvvIExRlC1tj0F+rhoLtAeNgXGwcvhAqn1LQYhyrFxPa/C7REiCIVCihFdLpcdx1F+TrFYSqUSoZCjSsK+H3zx5ZeUsVAoVFubqaRBq0eRxqJR13XVKCGNV9MC7Du7VkoA5AFcIMXkiUQilmXV19fNzc/vch5M0+xoP+c4jpQiEU8sr6zsuj4Vm8iyrH0FCMYDfX1vvH4mGok0NTbW19UvLi6ub2zU1NRAACCEqh0+HA4ZhiGEUAZLJbN8PygWS6VSORqNuK4XckLLKyvZ2qxlmaqYUCqVRsfHGWMnjx9X9J5QyMEY372nO8JexXTQ62de29sNI6V0Xe/e/fv7c4E6OzpqajLRaAQhFA6H1K521UMJAMAI9/X21NbWKo51KBRGCO3iAg3092WzteoXK4HKfgAAgEGMeCKeSiZs2wqHQ5ZlXbxwvsL2UfFuPr+FMaqry3qeVygUyA4UwaO2tkZ1hM3evq0mKA709VqWJaXM5/NBEBiEcM5d1xNCGEZUH4VXFZIyjvfEAOo+lQdxgcLhkGmaasGRECIUCl1WM0tAZeyPYVmm4gIBAEKhkGmafA8XSJ1IAEAikXiverIQhOGQE41GCMGGYai+eNu2GGOKlKBmQ6jUjZTbWaBSqez7fjQase1IsVgSQnjedg8AhLCKO40dx2lraVYryxTzolQqa47nq8oLAt92LArYOzkISMsy1eAg5Y5f3I8LVBEgBAkBqlVox6XZHovCGHNdMTwyyjknhvHe5UvxWNSyTM/zKWXFkguASym9fecOgrCnu9uyrHK5PDE1pVbD93Z3p9NJ27Y556ZpvvXmmzdnb/V0d1f+fj0SAryKnAjj/OAgBGDv8FkVdsp96wBCyFKpHARBqVRGCHEuyuVytQtkEOPypYu+H6gLXkpZLrv77gircIG2l4hVP+HypVKpzLnleb7r+WMTEyrLo15cbjPHGVNL8gqF4szMDKualTs+OTHQ1zd1Y3uDKkIoHo/FYlFF9uScR8LhypCiUtnFmOj5uK8kYCaTzue3ns0CcM6npqctqy8IKEJoa2ursqNuhwskS6VSOBxWjy6Vdu8Ik1KWSqVCoeh5/r4Cgot8Ll854sViiQZBhWvEOB8ZG7NMs7+vd2R0zK/6wUr/ZKUjjHMOgOSc37//kBBy6tTxSv2rVC7XZNKWZZZK5eHHhytqvCIIaLBv8UeIbYLQ/lkgxvn8wmJT45EgCK5eu+7tGvsjxNz8fDQaUcvtVlZWb+y3IywRT3DO9xeQ8tHc3MOHj+qy2WvXh+/eu7fL0ZJSAghPHD/+9d171T9ommZvd/dbb71JCDl29GgmnVleWeFc1GWzTU1HamrSAMB8vlAulzPpdDKRCILAMAxKqU4BgVeyDHz363t1dXUVl7salNJHc3Poqa7/vu1RQRDcmNnunZ3djyykliw9QYBzrq5kytghK1AY43OtrZlMOp1O1tZmamoy2Wy2r6fbNE0hhO/7uVx+fX3DDwLGeTQarXh+COkI4BWFmmi4L7YHdX57lsXz7Qh76llX8asaE1QZchQKhUzT2NzMb2xs2rYFgJyYmnZdd2Z2dnV1fWMjt7GRGxkdMwgem5jgnKv50pQxnQB6lXXA34sgUPcj+WHyuft6eyORMCHk4vmhYrE0OTXFhSAY27a1tbWleuhV0lP1BLe1tESjUc6pbTvtba0TE5Oc82g0spnLEUxUXUwfhVfTC7oxM/OE7x6KCrHvCiPwrUt0u6gQlW8ZpplIxGOxqG1blDLLsi5dvKCqWkFAo9FIIhFDCJXLLt/ZJ5BIxDOZJCHbY+BbWloY5xhjgonqqNRHQRNCn6EOYFtWf2+PyuUPDvRfGx7ZFQcrxXjKjrCDBdQdH41GCCEXL5wvFIqjY2OMc4MQhHHL2bMYY5U7qqnJuK67sbE5MTWpmlr6enpUBdrz/GKhKIWACKmjn8ttZTIp27bUlvlSqZzJpPL5LR0AaDzDXCCMcU9XV319XSqVVJvn0qnU/MKi4tV8swJsoN+2bYxxfV1214KjJwsYhmGZ5ltvvZlJp5LJuGVZEoB79x8YhjE0NHjsaJPjOOp3IQSj0ahq1Lr/4KEibM4vLEQikXLZvT4ycvfuXca5ZZknTpygQZDJpDEmxWKxWCxtFbay2drFpRUpxIOHelO8xqEVgGD8+utnYrFYPB4zDKLaZ44fP3782PGF+XmIoNoR1tBQH49HI5GwYRixaGx5ZWXXjrDdAsvLaivMxfPnXzt9KuTYaponxpgGQTqVPnXqpBRiZHTswcOHp0+dUrUt3w8KheLw6Fh1Hmljc6Op8cijR3NcCNuyent6bMs2DCKldF23XHYBkLdv3z5+/Fg+vzU5Nf0yXDgN8NOmQ1e4AyoYMA3DNIxLFy9UbnGMkSILeZ6fSMTff3xHGCHENI2KQDweU7VhAKFpGJVBV6piBSEEQHLGhkfHPM8jGOdyeYiQSuDkcnm6c/pN0+zq6EgmE5zzC+eHSqUSIWRyarqtpSUSiag2yFwu/8mnn54fGlxd29A9LhrPrABCynLZrVAhgoD6vg/VfgHVSL8zL6hqos6uBWKgeh/BYwJSBpQqznOhUFRzH8quNzYxWaFCqEqwaZrNZ8+qabXb81QwbmtpyWTSsVhkczOvVsJ8+NEVyqjj2IlELJfbqq1NY4zfeecd27bCIadQKOj3WOPZqRA3boRCA4oKUSqXr1y9xqvSiISQC+eHgoAi5AkhgiDY3MxP3bghHt8RFgSRikAutzU1PV0RUHsghRCqTFsqFtnO6f+mqZnScMhhlFau8J06gFkslg3DCIdDpVKZcQ4hsm3btp1IhIfDYd8PQo61tVWgjH322WfaAmg8swvked7Va9c7OjowQhNTU3upEMViybQs2zOBWgF244b3+I6wfQSqu3IovXr9umGYbS0tN2/dojSoTD//hvCzsyhbLYesUFtVy2+lDlB5SVtbW4VCsaYmjTFWBT7d5ajx/DEAFzwUciq7xMDjTCHlonR3dgIAxicmdu1QeqqAIopCQB3HZpTuPf3n2toS8bhpGoMDA7l8fubmTdM0+3p6HMcOgqC2NkMILpfdimJgjHO5/JEjdZ7nlUplP/CFIKOaAKfxkjbEcM4Zo6ZlKlV5DoEnwDCMTDqlZmYlkwk13LS9rW10bEwC2XGuXS2H9H1/bW3dNM3B/r5SqWRZZqFQghAWi6VwKOT5vr7+NZ4KdKgFGeClNGvuZfuoPE9rc3M0Gkkm4wihZDIejUZazp4dn5hwPc/z/Ju3bq2vb+S3Cusbm5//4x+D/X2u60Uikbq6bKlUqq2tSaeTpVJ5eGRUX/8az6kAlml2dXSq1Odgf7/aOPRiT/+5traLF847jnPxwvlzbW1KB2zbGhoYyGTSvu+r9aZqRhDGWNXRLMvqbG+vqclghOqytR3nzuXzW9MzM2qWltospvRKX/8az6kA6nRmszXqn9lsbW93t23blR3u20yenU77fU3EEwQMw7Asq74uq3Zlp1LJ+rqsaZqO4/T39qnOYMMwOed1dVnVt6aqYGqVqkqDIoTi8ajj2Ddv3QoCnzFWKBQbGxvUoiRNfdN4/hgAQRiLRdUkTTWCQZWxGGPXrw8zzjBCnR2dqhoFABjs778+MlqdBVJUn2QyqQJoJSC2A1Y8NDhkGETNgygUiuFwKAiCnq5OxvnI2KgQAkHU29MjxPbs6M3N3M1btxTrM+Q4hkFs20YIqqU3nHODGKqeIGVeCOm6rh7wr/ECKsFqPSPGGABpmaZlmpcuXtxZkIEjkXAulwcA1NbW9HR1TUxOVoJdg5B4PJbJJFdW1qSUtbU1QwMDRA16AEBZhp29GFD9jxByYnKqwncYGRtrb2uLRqOFQuHGzZvq64o9SilTa1JVVcGyrP7ebinB1lZBDZFOpRJqLrSGxnMtyADA9wOEUH19HQDAdT0AIKVUSgAgUEQGIbhpGoRgVd+NRMLbTIcd7VFnEWOkBAyDqHNPKQ0ohQCapsEYy2Zr1chb//GkDef8zqefnmttvbMzrdZxnAtDg5QyNfHccSzVcHx+aPDatet9vT1NTUcUS3RjI6ddII3nVwDG2Pjk5HlrIJGIY4xLZXdjfWPqxrQQghAyNDBoGETNMFR7u/L5wm4qhJRSCkJItQCllDI+PHydMY4w7uvpqSzIqDg5lZihrbU1k05LKQf6+tbW1//+j38MDvQDAMYnJ7s6OoTgnAsppePYpXJZSOl5fi6Xt22Lc+G6rn5fNb5tJfjja9f7e3sgRKPj4xU2ThDQD69cIRj39vQ4jq3G85dK5bW1jZu3Zr9hOiDc29Nj2zalTAmsr2/enJ2t9AEDSodHR9vb2tRUiIqTA3bGudTXZWOx6OZmPpmM27YVj0WBlFevXZcAOI5tWdba2kYmk9raKlwbHmlracEYb2zmTINIKU3TnJmd1VkgjW9VB+CcQ4QBhLSKjVOZoz86Nraysrqxsbmxsbm6ujZz86bn+UFA1Ue1wOZmblvA96sT80EQzMzOMsZ2rZ/BGDe/e9a2bcUkVeNBg4Be+fiqHwTtbW3RaCSZTKjxdRhjKSXGGMDtWAJCtL6xqfnPGi9uOjQhe11qz/eHR8cG+vsBABNTU/6eoQ9PFaiM98EI7Yz3USxrbJqm2oBNiKoDfDNCoupVYdV+0HHuHABgeGSEMYYglADIHe6QhsZzKoBtW/19fSrrcvH80MfXrlU2Dr2QqRCqszGRSFBKL1+6lMvlJqemEMaD/f0YI8aYlIBzXl9fp5aCqQgh5DjxeIxSJoRoaKhXWyINw7g2PKzmX+tTr/ECFABj3N52LpmIF4tlAEAqlezv7R0ZHWOcqSTM3jrXXhPxBAGDEMM0Eol4LBbJ5bZisYjaQ8w554JfHxmRQvT29DDGVHY/l8szSh3H6e/r9TxfLVfFGPl+4Lre4ccKaWg8Q0tkNBoNAgohiMejnIvjx48dP358fm6eMYYx7u3ufuvNNyEAGKGmpsaFhYVqRucTBBzbvnB+6PSpU+FwKB6PFQqFmpo0pTSX2xqbmLx7714QBIzz1bW1aDRKgyCX37o5Owsh7OnqnJiarq2pSSYTm5v5crlcKpUdxx4eGdk7dUtD49sGwQiho0cb1HBcAIAEACE0NDgQchzLshKJeDy+PXQ/W1vTca7dtizFHTINwzLNRCJeW5tGCFYELMtybLunuwshBCBUwxlV8/vOskemDIVtWT1dnfV1tQjh+rpsf29PV0fH2PiEym9ijNUA0JMnj2GMn5VqqqHx9JbIUqmsdnJlszUBZaVSaWR0DEA40N83NDig+BGmaSAEIUQAgG9afsFjhbBK2BqLRc8PDjDGxsYnGOeGQS5fvOh5dm1txvN8z/NmZm9W+h7ffvvtRCIRiYQKhVI0GoYQbhWKlDGDEMuyymU3FAo1NNSpHKse+q/x4lsip2dmTLPH9wOM8VahoHrVAQAff3wVQGgQcuniBc4FQqipqaFYLO/tCZZSqLZ3JcAYuz48whijlQHoubyU0rIsNfWkeo9fyHHUhgHDIKZpQuhihBzHUatUi8Wi6hfzfT+/taXnnWi8+CyQ7/tT09Md7e0AgOmZmUpafSeRL33flxLU1KQpZarld7qqJxgTPNDXF4vFKgLlshtU1RM45zOzs81nzzqO47ru7Tt3dnq7MEK47LoqldnY2MAYk1JiQnq7u6PRCKUU41A0GlHCrusihHQQrPEig+BtL7y7Sy0dOn3qZG1NzfzCQmUBjBBifmE+k04LIV3X29jIjU9O+r7PhVAfjLH5hfl06jGB6uKU2umSSacYo8lkIpNOLywuGobR3dnZ1Nj46Wef1WWzaqSh63qlUplgEomEKaVBEBSLRcZ4uezmt4ojY2M6AtZ48WnQc21ttbU1a2vrEMJEIg4htExTLeoF21wJf2xiUhWhpm/c2LuGklJ2kIAaGZRIxhPxWLnsJhIxQsjQQL/n+1NT0ypCMAxjczOHMeGcRaNRISSl1PO86yOjlFLVDi+FYPru13jhWSAIYSgUUn1YEELTNDBGFy+cv3jxorPTGmZbVldHu/LF28+dsyxrlwq1trT09vTsFbBt++KF8xeGzhvEsCxL0fohhK7rTUxOeb4vpWw522zbdlPTEcZoU9MRhFA+n3ddV3UdqB3alFJ9+jVebhr0xIljGKs0KAQAEIwGBwccx3Ecu7+vt64uqyZkZTKp9rY2y7KMHZiGkU4lazKpXQKOY/d2d2OEAARSfpMGVR5/JQukvKzK1lQ1Wej6fgN6NTReQj+AlIVCIZVKUEqz2VrOhed5wyMjAICB/v7zQ4MIIYIVlwcKIQ3DiMdjly5eAFVbIpWfs0uAq1wQ5yqP5Hl2Nluj0qCzt25BCG3L6urqDDkOpdTz/Lq6rOf5lFIhpb7vNb67NOgnn34aj8d9P1D6QCkLAso4vzY8MjjQj7ZHIyKMkWKtQQgl2Gc0YrWAqqYpBwZCqOYuqk3ApVIZE9LZ0Y4QvnX79jvvvGMQLKVUc+OKxZLO82h8p0FwW2trMhlfWVkFAGSztZRSwzQBpZ7nXfn4qkFwX29vPB6rr68TQpTLbi6Xv3Hzm0XwBOPBgf5oNFItMHPzpiJ1mqb57jtvp1LJSCT06NF8U9MRwzDeevPNmdlbCMHuzk5FbA6HQ4oLxBgfn5zUOqDxHSkAhNuBKcYYAKimUF04P6SKWWo5+9T09MDAgG1ZKlN56/bt6jyPEKJQLNn2FiGkIqCGw9m2PdDXy7nYKXUZqtQVCYf7e3s5Z0LIsYnxs++8wxhX/WLFYlHz+zW+0xiAMaaCYAihcoSABBihnq7OickpAGRHe0c8Fl1aWuZcpNOp5rNnZ2Znq2ffRsLhcDi0SwBB2N3ViQkpu0UpJULo2LEm5QVxISgNRsfGGeeMscnpaQghglBIqfn9Gt95JTgISqWyOsqe55dK5ekbNxjnQMrurk412EfZB0UKisdjFy+cBxJUBcHINI1qgcH+PkrpxOQUJuTtt94ql8sbG2h7PHq5zCgdn5ipVLX0idf4/lwgAGzbroSejPFQyOnu6qSUTkxNT0xNG4bR39uDMVITU1SACwGUlUgYAoRwZaQKhJBSNjk9zRhjnHW0t0sALMsqFIqu6zLGbdvSk5w1fkBjUdxyub6+LhqNIAQ9z19ZWRsbH4cQdnd22LajSM6ci8bGeiFkuewWi6XZ27crJ5gQ0tPVFY1GKgJSyv6+XkrptevDYxPjhBgXzw/F41FlAba2Crd26EAaGt9/GvTmrVvdZqfv+xjjctkdHR9XMe7E1PRgfx9EBAKQz29ZO0Gw4zg9XZ3VDym7brWA6l4HEgAgGeNSglwur8Ncje8d8MyZY+CApniEEARAPE65IYQYBjk/OJhKJcPhkBBia6u4vLwyMTUlxDcWYGhwsLYmY9tWtYDqeqk8X4e5Gj/gBRkHOOWKn1wsliKRCISuEMLzvLLrsqreXCFkqVhyIxEhxL4COszVAD9kOvSTIaVcXFpKJpLlslsoFAuFwuytW9Vt708V0ND4obtAh5nxD8F25nPf6/ypAhoa3zv+f3/ckilPj6jJAAAAAElFTkSuQmCC"};
+Object.entries(hunterAssetTextures).forEach(([name,uri])=>{
+ loadTexture(uri).then(texture=>{textures[name]=texture}).catch(console.warn)
+});
+const hunterModeEl=document.getElementById('hunterMode');
+const hunterModeRow=document.getElementById('hunterModeRow');
+
+function generateHunterLayout(seed){
+ const random=()=>{
+  seed=(seed+0x6D2B79F5)|0;
+  let t=Math.imul(seed^(seed>>>15),1|seed);
+  t^=t+Math.imul(t^(t>>>7),61|t);
+  return ((t^(t>>>14))>>>0)/4294967296
+ };
+ const shuffle=items=>{
+  for(let i=items.length-1;i>0;i--){
+   const j=Math.floor(random()*(i+1));
+   [items[i],items[j]]=[items[j],items[i]]
+  }
+  return items
+ };
+ const cells=Array.from({length:hunterSize**2},(_,id)=>({
+  id,col:id%hunterSize,row:Math.floor(id/hunterSize),
+  x:hunterOrigin+id%hunterSize*hunterCell,z:hunterOrigin+Math.floor(id/hunterSize)*hunterCell
+ }));
+ const edge=(a,b)=>Math.min(a,b)*cells.length+Math.max(a,b);
+ const neighbors=cell=>cells.filter(other=>Math.abs(cell.col-other.col)+Math.abs(cell.row-other.row)===1);
+ const passages=new Set(),visited=new Set();
+ function visit(cell){
+  visited.add(cell.id);
+  for(const next of shuffle(neighbors(cell))){
+   if(visited.has(next.id))continue;
+   passages.add(edge(cell.id,next.id));
+   visit(next)
+  }
+ }
+ visit(cells[Math.floor(random()*cells.length)]);
+ const remaining=cells.flatMap(cell=>neighbors(cell).filter(next=>next.id>cell.id).map(next=>edge(cell.id,next.id)))
+  .filter(key=>!passages.has(key));
+ for(const key of shuffle(remaining).slice(0,8))passages.add(key);
+ const lamps=[];
+ for(const row of [0,3])for(const col of [0,3]){
+  lamps.push(shuffle(cells.filter(cell=>cell.row>=row&&cell.row<row+2&&cell.col>=col&&cell.col<col+2))[0])
+ }
+ lamps.push(cells[12]);
+ const exitRows=shuffle([0,1,2,3,4]);
+ const exits=[{...cells[exitRows[0]*5],side:-1},{...cells[exitRows[1]*5+4],side:1}];
+ const spawns=shuffle([cells[0],cells[4],cells[20],cells[24]]);
+ const survivor=spawns[0],hunter=cells[24-survivor.id];
+ const available=shuffle(cells.filter(cell=>!lamps.includes(cell)&&
+  !exits.some(exit=>exit.id===cell.id)&&cell!==hunter&&cell!==survivor));
+ const firstVents=shuffle(cells.filter(cell=>cell.col<=1&&cell.row!==2));
+ const lastVents=shuffle(cells.filter(cell=>cell.col>=3&&cell.row!==2));
+ return {cells,passages,edge,lamps,exits,survivor,hunter,
+  lockers:available.slice(0,8),vents:[firstVents[0],lastVents[0],firstVents[1],lastVents[1]]}
+}
+
+function buildHunterArena(layout){
+ const half=hunterCell/2,height=2.68;
+ const middle=hunterOrigin+2*hunterCell,span=hunterCell*hunterSize;
+ addBox(middle,-.08,middle,span,.16,span,'floor',false,[.61,.54,.38],0,[12,12]);
+ addBox(middle,height+.05,middle,span,.10,span,'ceiling',false,[.75,.72,.53],0,[14,14]);
+ function wall(x,z,width,depth){
+  addBox(x,height/2,z,width,height,depth,'wall',true,[.82,.72,.44],0,[1.5,1]);
+  addBox(x,.09,z,width+.035,.18,depth+.035,'objIndustrialMetal',false,[.34,.32,.22])
+ }
+ function divider(x,z,vertical,open,exit){
+  const gap=1.78;
+  if(open||exit){
+   const length=(hunterCell-gap)/2,offset=(length+gap)/2;
+   for(const side of [-1,1])wall(x+(vertical?0:offset*side),z+(vertical?offset*side:0),vertical?.18:length,vertical?length:.18);
+   if(exit){
+    exit.gate=addBox(x,1.22,z,.20,2.44,gap,'objIndustrialMetal',true,[.57,.25,.20],0,[1,1],'brána HUNTER');
+    exit.barrier=colliders.at(-1);
+    exit.sign=addBox(x-exit.side*.13,2.48,z,.095,.13,1.24,'white',false,[.85,.21,.11]);
+    exit.sign.goalGlow=.35
+   }
+   return
+  }
+  wall(x,z,vertical?.18:hunterCell+.12,vertical?hunterCell+.12:.18)
+ }
+ for(const cell of layout.cells){
+  const {x,z,row,col,id}=cell;
+  if(col===0)divider(x-half,z,true,false,layout.exits.find(exit=>exit.id===id));
+  if(row===0)divider(x,z-half,false,false);
+  divider(x+half,z,true,col<hunterSize-1&&layout.passages.has(layout.edge(id,id+1)),
+   col===hunterSize-1&&layout.exits.find(exit=>exit.id===id));
+  divider(x,z+half,false,row<hunterSize-1&&layout.passages.has(layout.edge(id,id+hunterSize)));
+  const lampIndex=layout.lamps.findIndex(lamp=>lamp.id===id);
+  if(lampIndex!==-1){
+   buildHunterFixture(x,z,height,lampIndex,layout.lamps[lampIndex]);
+   addBox(x+.77,1.83,z+.65,.068,1.35,.068,'objIndustrialMetal',false,[.51,.43,.30]);
+   addBox(x+.77,.43,z+.65,.08,.90,.08,'objIndustrialMetal',false,[.36,.31,.22]);
+   const panel=addBox(x+.72,1.05,z+.65,.23,.37,.40,'objIndustrialMetal',true,[.58,.50,.29]);
+   const indicator=addBox(panel.x-.12,1.14,panel.z,.04,.095,.15,'white',false,[.96,.35,.10]);
+   indicator.goalGlow=.55;
+   layout.lamps[lampIndex].switch={x:panel.x-.40,z:panel.z,indicator}
+  }else if(id%3===0){
+   addBox(x,height-.067,z,.66,.09,.66,'objIndustrialMetal',false,[.40,.41,.34]);
+   const fixture=addBox(x,height-.128,z,.64,.035,.64,'hunterRoundFixture',false,[.85,.81,.55]);
+   fixture.goalGlow=.20
+  }
+  if(id%3===1){
+   addBox(x-1.39,1.08,z-1.34,.46,2.16,.49,'wall',true,[.67,.61,.39]);
+   addBox(x-1.39,.095,z-1.34,.51,.19,.54,'objIndustrialMetal',false,[.25,.25,.19])
+  }
+ }
+ for(const exit of layout.exits){
+  exit.useX=exit.x+exit.side*(half-.57);
+  for(const offset of [-.92,.92]){
+   addBox(exit.x+exit.side*(half-.11),1.19,exit.z+offset,.18,2.38,.08,
+    'objIndustrialMetal',false,[.58,.51,.32])
+  }
+ }
+ layout.lockers=layout.lockers.map(cell=>hideWardrobe('hunt-'+cell.id,'Aréna',cell.x+1.45,cell.z+1.40));
+ layout.vents=layout.vents.map((cell,index)=>{
+  const x=cell.x+1.36,z=cell.z-1.36;
+  addBox(x,.06,z,.93,.12,1.04,'objIndustrialMetal',false,[.29,.30,.23]);
+  for(let slat=0;slat<6;slat++){
+   const grille=addBox(x,.132,z-.37+slat*.147,.80,.027,.055,'objIndustrialMetal',false,[.67,.70,.52]);
+   grille.goalGlow=.12
+  }
+  for(const side of [-1,1])addBox(x+side*.43,.145,z,.075,.045,1.06,'objMetalMint',false,[.66,.69,.47]);
+  const marker=addBox(x,.132,z+.49,.65,.035,.08,'white',false,index<2?[.24,.59,.55]:[.63,.42,.19]);
+  marker.goalGlow=.36;
+  return {x,z}
+ })
+}
+
+function buildHunterFixture(x,z,height,index,lamp){
+ const rotated=index%2!==0,fixture=addBox(x,height-.12,z,rotated?.48:1.61,.14,rotated?1.61:.48,
+  'objIndustrialMetal',false,[.46,.48,.38]);
+ lamp.diffuser=addBox(x,fixture.y-.084,z,1.52,.037,.40,'hunterFixture',false,[1,1,1],rotated?Math.PI/2:0);
+ lamp.diffuser.goalGlow=.10;
+ for(const side of [-1,1]){
+  addBox(x+(rotated?side*.15:0),fixture.y+.07,z+(rotated?0:side*.15),
+   .035,.12,.035,'objIndustrialMetal',false,[.31,.32,.25])
+ }
+}
+
+function beginHunterRound(session,seed,hunterId,players,round){
+ beginRoomRound(session);
+ session.serial=round;
+ const layout=generateHunterLayout(seed);
+ const participants=new Map(players.map(id=>[id,{id,status:'active',hp:hunterHealth,protectedUntil:0}]));
+ const hunt=session.hunt={layout,players:participants,hunterId,localHunter:session.id===hunterId,round,mask:0,
+  joinDeadline:performance.now()+20000,allLamps:(1<<layout.lamps.length)-1,
+  lights:new Float32Array(20),stamina:3.7,hitAt:0,dashUntil:0,dashAt:0,
+  pulseUntil:0,pulseAt:0,ventAt:0,started:false,charge:-1,chargeTime:0,
+  original:{objects,colliders,doors,hideables,mapVisible,help:document.getElementById('help').textContent}};
+ objects=[];colliders=[];doors=[];hideables=[];
+ mapVisible=false;
+ document.getElementById('miniWrap').style.display='none';
+ buildHunterArena(layout);
+ layout.lamps.forEach((lamp,index)=>hunt.lights.set([lamp.x,2.50,lamp.z,0],4*index));
+ goalInfoEl.hidden=true;
+ const spawn=hunt.localHunter?layout.hunter:layout.survivor;
+ const survivorSlot=players.filter(id=>id!==hunterId).indexOf(session.id);
+ const offset=survivorSlot>0?.76:0;
+ const angle=survivorSlot*Math.PI/2;
+ Object.assign(player,spawnPose,{x:spawn.x+offset*Math.cos(angle),z:spawn.z+offset*Math.sin(angle),
+  yaw:Math.atan2(2-spawn.col,spawn.row-2)});
+ document.getElementById('help').textContent=hunt.localHunter
+  ?'WASD pohyb · F baterka · klik / mezerník útok · Q výpad · R stopa · E prohledat · V mikrofon'
+  :'WASD pohyb · Shift sprint · F baterka · podrž E u lampy · C + E šachta · V mikrofon';
+ hunterHudEl.hidden=true
+}
+
+function setHunterLamps(hunt,mask){
+ if(hunt.mask===mask)return;
+ hunt.mask=mask;
+ hunt.layout.lamps.forEach((lamp,index)=>{
+  const lit=!!(mask&(1<<index));
+  lamp.diffuser.tint=lit?[1.0,.98,.67]:[1,1,1];
+  lamp.diffuser.goalGlow=lit?.97:.10;
+  hunt.lights[index*4+3]=lit?.76:0;
+  lamp.switch.indicator.tint=lit?[.48,1,.56]:[.96,.35,.10]
+ });
+ if(mask===hunt.allLamps){
+  for(const exit of hunt.layout.exits){
+   exit.gate.hidden=true;
+   exit.sign.tint=[.42,1,.59];
+   exit.sign.goalGlow=.80;
+   const index=colliders.indexOf(exit.barrier);
+   if(index>=0)colliders.splice(index,1)
+  }
+  message('Všechny lampy svítí. Oba východy jsou otevřené.',4200)
+ }
+}
+
+function hunterPose(){
+ return {...player,present:localPlayerPresent(),active:started,hiding:hiddenIn}
+}
+
+function hunterSpawnContains(x,z){
+ const low=hunterOrigin-hunterCell/2-.15,high=hunterOrigin+4.5*hunterCell+.15;
+ return x>=low&&x<=high&&z>=low&&z<=high
+}
+
+function receiveHunterPacket(session,packet,sender){
+ const hunt=session.hunt;
+ if(packet.round!==hunt.round||hunt.winner)return;
+ if(session.host){
+  const participant=hunt.players.get(sender);
+  if(!participant||participant.status!=='active')return;
+  if(packet.type==='hunt-pose'){
+   const pose=readHunterPose(packet.pose,sender===hunt.hunterId);
+   if(pose){participant.pose=pose;participant.rawPose=packet.pose}
+  }
+  if(packet.type==='hunt-act')resolveHunterAction(session,sender,packet.action,packet.index);
+  return
+ }
+ if(packet.type==='hunt-state'&&Array.isArray(packet.players)){
+  if(Number.isInteger(packet.mask)&&packet.mask>=0&&packet.mask<=hunt.allLamps&&
+     (packet.mask&hunt.mask)===hunt.mask)setHunterLamps(hunt,packet.mask);
+  hunt.started=packet.live===true;
+  for(const [id,hp,status,rawPose] of packet.players){
+   const participant=hunt.players.get(id);
+   if(!participant||!Number.isInteger(hp)||hp<0||hp>hunterHealth||!hunterStatuses.includes(status))continue;
+   const previous=participant.hp;
+   participant.hp=hp;
+   participant.status=status;
+   if(id===session.id&&previous>hp)onHunterHurt(hunt);
+   if(id!==session.id)participant.pose=status==='active'?readHunterPose(rawPose,id===hunt.hunterId):null
+  }
+ }
+ if(packet.type==='hunt-end'&&(packet.winner==='hunter'||packet.winner==='survivor')){
+  for(const [id,status] of packet.results){
+   const participant=hunt.players.get(id);
+   if(participant&&hunterStatuses.includes(status))participant.status=status
+  }
+  finishHunterRound(session,packet.winner)
+ }
+}
+
+function readHunterPose(rawPose,isHunter){
+ const pose=readRoomPose(rawPose);
+ return pose&&hunterSpawnContains(pose.x,pose.z)&&(!isHunter||!pose.hiding)?pose:null
+}
+
+function updateHunterNetwork(session){
+ const hunt=session.hunt;
+ if(hunt.winner)return;
+ const pose=currentRoomPose();
+ if(!session.host){
+  sendRoom({type:'hunt-pose',round:hunt.round,pose});
+  return
+ }
+ const local=hunt.players.get(session.id);
+ local.rawPose=pose;
+ local.pose=hunterPose();
+ if(!hunt.started){
+  const active=Array.from(hunt.players.values()).filter(p=>p.status==='active');
+  if(active.every(p=>p.pose?.present))hunt.started=true;
+  else if(performance.now()>=hunt.joinDeadline){
+   for(const participant of active)if(!participant.pose?.present)participant.status='left';
+   hunt.started=true;
+   if(hunt.players.get(hunt.hunterId).status==='left')finishHunterRound(session,'survivor');
+   else checkHunterResult(session)
+  }
+ }
+ if(!hunt.winner)sendRoom({type:'hunt-state',round:hunt.round,mask:hunt.mask,live:hunt.started,
+  players:[...hunt.players].map(([id,p])=>[id,p.hp,p.status,p.rawPose||null])
+ })
+}
+
+function hunterLeaveLocker(){
+ const locker=hiddenIn;
+ if(!locker)return;
+ player.x=locker.entryX;player.z=locker.entryZ;
+ leaveHideImmediate()
+}
+
+function hunterNear(pose,x,z,range){
+ return Math.hypot(pose.x-x,pose.z-z)<=range
+}
+
+function onHunterHurt(hunt){
+ if(hiddenIn)hunterLeaveLocker();
+ hunt.charge=-1;
+ hunt.chargeTime=0;
+ message('Petřík tě zasáhl!',1400)
+}
+
+function activeHunterSurvivors(hunt){
+ return [...hunt.players.values()].filter(p=>p.id!==hunt.hunterId&&p.status==='active')
+}
+
+function checkHunterResult(session){
+ const hunt=session.hunt;
+ if(!hunt||hunt.winner||activeHunterSurvivors(hunt).length)return;
+ const escaped=[...hunt.players.values()].some(p=>p.status==='escaped');
+ finishHunterRound(session,escaped?'survivor':'hunter')
+}
+
+function resolveHunterAction(session,id,action,index){
+ const hunt=session.hunt,participant=hunt.players.get(id);
+ const actor=id===session.id?hunterPose():participant?.pose;
+ if(!hunt.started||hunt.winner||participant?.status!=='active'||!actor?.active)return;
+ if(id!==hunt.hunterId){
+  if(actor.hiding||!Number.isInteger(index))return;
+  if(action==='lamp'){
+   const lamp=hunt.layout.lamps[index];
+   if(lamp&&hunterNear(actor,lamp.switch.x,lamp.switch.z,1.03))setHunterLamps(hunt,hunt.mask|(1<<index))
+  }
+  if(action==='exit'&&hunt.mask===hunt.allLamps){
+   const exit=hunt.layout.exits[index];
+   if(exit&&hunterNear(actor,exit.useX,exit.z,1.04)){
+    participant.status='escaped';
+    checkHunterResult(session)
+   }
+  }
+  return
+ }
+ const now=performance.now();
+ if((action!=='hit'&&action!=='locker')||now<hunt.hitAt)return;
+ const locker=action==='locker'&&Number.isInteger(index)?hunt.layout.lockers[index]:null;
+ if(action==='locker'&&(!locker||!hunterNear(actor,locker.entryX,locker.entryZ,1.05)))return;
+ hunt.hitAt=now+800;
+ let closest=null,closestDistance=Infinity;
+ for(const candidate of activeHunterSurvivors(hunt)){
+  const target=candidate.id===session.id?hunterPose():candidate.pose;
+  if(!target?.present||now<candidate.protectedUntil)continue;
+  const dx=target.x-actor.x,dz=target.z-actor.z,distance=Math.hypot(dx,dz);
+  const reached=locker?target.hiding===locker:!target.hiding&&distance<=1.66&&
+   (distance<.22||(Math.sin(actor.yaw)*dx-Math.cos(actor.yaw)*dz)/distance>.44)&&
+   !sightBlocked(actor.x,actor.z,actor.y,target.x,target.z,target.y);
+  if(reached&&distance<closestDistance){closest=candidate;closestDistance=distance}
+ }
+ if(!closest)return;
+ closest.hp--;
+ closest.protectedUntil=now+2350;
+ if(closest.id===session.id)onHunterHurt(hunt);
+ if(closest.hp===0){
+  closest.status='caught';
+  checkHunterResult(session)
+ }
+}
+
+function submitHunterAction(action,index){
+ const session=room;
+ if(session.host)resolveHunterAction(session,session.id,action,index);
+ else{
+  updateHunterNetwork(session);
+  sendRoom({type:'hunt-act',round:session.hunt.round,action,index})
+ }
+}
+
+function finishHunterRound(session,winner){
+ const hunt=session.hunt;
+ if(hunt.winner)return;
+ hunt.winner=winner;
+ if(session.host)sendRoom({type:'hunt-end',round:hunt.round,winner,results:[...hunt.players].map(([id,p])=>[id,p.status])});
+ endingActive=true;
+ started=false;
+ moving=false;
+ hunterHudEl.hidden=true;
+ overlay.style.display='none';
+ Object.keys(keys).forEach(key=>keys[key]=false);
+ if(document.pointerLockElement===canvas)document.exitPointerLock?.();
+ endingImageEl.hidden=true;
+ const escaped=[...hunt.players.values()].filter(p=>p.status==='escaped').length;
+ endingTitleEl.textContent=winner==='hunter'?'PETŘÍK VYHRÁL':'PŘEŽIVŠÍ VYHRÁLI';
+ endingBodyEl.textContent=escaped?'Z arény uniklo '+escaped+' z '+(hunt.players.size-1)+' přeživších.':
+  winner==='hunter'?'Nikdo z přeživších se nedostal ven.':'Petřík se odpojil nebo nenastoupil do kola.';
+ document.getElementById('endingHint').textContent='Klikni pro návrat do místnosti';
+ endingScreenEl.classList.add('show');
+ endingScreenEl.setAttribute('aria-hidden','false')
+}
+
+function returnFromHunterRound(session){
+ restoreRoomScene(session);
+ session.entered=false;
+ session.round=false;
+ session.hunt=null;
+ document.getElementById('endingHint').textContent='Klikni pro návrat do lobby';
+ overlay.style.display='flex';
+ setMultiplayerPanel(true);
+ showRoomStatus(session.host?'Kolo skončilo. Další můžeš spustit, až se všichni vrátí.':'Kolo skončilo. Čekám na další kolo.');
+ if(session.host)syncRoomRoster(session);
+ else sendRoom({type:'lobby',round:session.serial})
+}
+function hunterInteraction(hunt){
+ if(hiddenIn)return {action:'leave',label:'E · vylézt ze skříně'};
+ const nearby=(items,point,limit)=>{
+  const index=items.findIndex(item=>{
+   const spot=point(item);
+   return hunterNear(player,spot.x,spot.z,limit)
+  });
+  return index<0?null:index
+ };
+ if(!hunt.localHunter){
+  const lamp=nearby(hunt.layout.lamps,lamp=>lamp.switch,.89);
+  if(lamp!==null&&!(hunt.mask&(1<<lamp)))return {action:'lamp',index:lamp,label:'Podrž E · spustit lampu'};
+  const exit=nearby(hunt.layout.exits,exit=>({x:exit.useX,z:exit.z}),.87);
+  if(exit!==null)return {action:'exit',index:exit,label:hunt.mask===hunt.allLamps?'E · uniknout':'Východ · čeká na všechny lampy'};
+  const vent=nearby(hunt.layout.vents,item=>item,.78);
+  if(vent!==null)return {action:'vent',index:vent,label:'C / Ctrl + E · prolézt šachtou'}
+ }
+ const locker=nearby(hunt.layout.lockers,item=>({x:item.entryX,z:item.entryZ}),.82);
+ if(locker!==null)return {action:'locker',index:locker,label:hunt.localHunter?'E · prohledat skříň':'E · schovat se do skříně'};
+ return null
+}
+
+function hunterAttack(){
+ const hunt=room?.hunt,now=performance.now();
+ if(!started||!hunt?.started||!hunt.localHunter||hunt.players.get(room.id).status!=='active'||now<(hunt.localHitAt??0))return;
+ hunt.localHitAt=now+800;
+ submitHunterAction('hit')
+}
+
+function handleHunterKey(event){
+ const hunt=room.hunt,now=performance.now();
+ if(['Space','KeyQ','KeyR'].includes(event.code))event.preventDefault();
+ if(event.repeat)return;
+ if(event.code==='KeyF'&&!hiddenIn)setRoomFlashlight(flashlight?0:1);
+ if(event.code==='KeyV'&&micReady){event.preventDefault();toggleMicrophone()}
+ if(!hunt.started||hunt.players.get(room.id).status!=='active')return;
+ if(event.code==='Space')hunterAttack();
+ if(hunt.localHunter&&event.code==='KeyQ'&&now>=hunt.dashAt){
+  hunt.dashUntil=now+530;hunt.dashAt=now+9300
+ }
+ if(hunt.localHunter&&event.code==='KeyR'&&now>=hunt.pulseAt){
+  hunt.pulseUntil=now+3500;hunt.pulseAt=now+17500
+ }
+ if(event.code!=='KeyE')return;
+ const item=hunterInteraction(hunt);
+ if(!item)return;
+ if(item.action==='locker'&&!hunt.localHunter){
+  const locker=hunt.layout.lockers[item.index];
+  if([...hunt.players.values()].some(p=>p.id!==room.id&&p.status==='active'&&p.pose?.hiding===locker)){
+   message('Ve skříni už někdo je.',1300);
+   return
+  }
+  hiddenIn=locker;
+  Object.assign(player,{x:hiddenIn.insideX,z:hiddenIn.insideZ,crouched:true,r:.12,y:.72});
+  moving=false;
+  hideShadeEl.style.display='block'
+ }else if(item.action==='leave')hunterLeaveLocker();
+ else if(item.action==='vent'){
+  if(!(keys.KeyC||keys.ControlLeft||keys.ControlRight)||now<hunt.ventAt)return;
+  const exit=hunt.layout.vents[item.index^1];
+  const dz=exit.z+.65;
+  if(blocked(exit.x,dz))return;
+  Object.assign(player,{x:exit.x,z:dz});
+  hunt.ventAt=now+2600;
+  message('Prolezl/a jsi šachtou.',1400)
+ }else if(item.action!=='lamp')submitHunterAction(item.action,item.index)
+}
+
+function updateHunter(dt){
+ const session=room,hunt=session.hunt,now=performance.now();
+ if(hunt.winner)return;
+
+ if(!started)return;
+ sampleMicrophone();
+ const lamps=hunt.layout.lamps.filter((_lamp,index)=>hunt.mask&(1<<index)).length;
+ const role=hunt.localHunter?'PETŘÍK':'PŘEŽIVŠÍ';
+ const local=hunt.players.get(session.id),remaining=activeHunterSurvivors(hunt);
+ const life=hunt.localHunter?'V aréně '+remaining.length+'/'+(hunt.players.size-1):
+  '♥'.repeat(local.hp)+'♡'.repeat(hunterHealth-local.hp);
+ const seconds=at=>Math.ceil(Math.max(0,at-now)/1000);
+ let detail=hunt.mask===hunt.allLamps?'Oba východy jsou otevřené':'Lampy '+lamps+'/'+hunt.layout.lamps.length;
+ if(!hunt.started)detail='Čeká se na hráče · '+Math.max(0,seconds(hunt.joinDeadline))+' s';
+ if(local.status!=='active')detail=local.status==='escaped'?'Unikl/a jsi. Čeká se na konec kola.':
+  local.status==='caught'?'Petřík tě dostihl. Čeká se na konec kola.':'Do kola jsi nenastoupil/a včas.';
+ if(!hunt.localHunter&&hunt.started&&local.status==='active')detail+='   ·   Sprint '+Math.round(100*hunt.stamina/3.7)+' %';
+ if(hunt.localHunter&&hunt.started){
+  detail+='   ·   Q Výpad '+(seconds(hunt.dashAt)?seconds(hunt.dashAt)+' s':'připraven')+'   ·   R Stopa '+(seconds(hunt.pulseAt)?seconds(hunt.pulseAt)+' s':'připravena');
+  const target=now<hunt.pulseUntil?remaining.map(p=>p.pose).filter(p=>p?.present&&!p.hiding)
+   .sort((a,b)=>Math.hypot(a.x-player.x,a.z-player.z)-Math.hypot(b.x-player.x,b.z-player.z))[0]:null;
+  if(target){
+   const dx=target.x-player.x,dz=target.z-player.z;
+   const angle=Math.atan2(dx,-dz)-player.yaw;
+   const directions=['↑','↗','→','↘','↓','↙','←','↖'];
+   detail+='   ·   '+directions[(Math.round(angle/(Math.PI/4))%8+8)%8]+' '+Math.round(Math.hypot(dx,dz))+' m'
+  }
+ }
+ hunterHudEl.textContent=role+'  ·  '+life+'  ·  '+detail;
+ placeEl.textContent='HUNTER · aréna';
+ if(toastTimer&&now>toastTimer){toastEl.style.opacity='0';toastTimer=0}
+ if(keys.ArrowLeft)player.yaw-=dt*1.8;
+ if(keys.ArrowRight)player.yaw+=dt*1.8;
+ if(keys.ArrowUp)player.pitch=Math.min(1.25,player.pitch+dt*1.35);
+ if(keys.ArrowDown)player.pitch=Math.max(-1.25,player.pitch-dt*1.35);
+ if(!hunt.started||local.status!=='active'){moving=false;promptEl.style.opacity='0';return}
+ if(!hiddenIn){
+  player.crouched=!hunt.localHunter&&!!(keys.KeyC||keys.ControlLeft||keys.ControlRight);
+  player.r=player.crouched?.22:.28;
+  player.y+=((player.crouched?.48:1.10)-player.y)*Math.min(1,dt*11);
+  const dash=hunt.localHunter&&now<hunt.dashUntil;
+  const forward=dash?1:Number(!!keys.KeyW)-Number(!!keys.KeyS);
+  const strafe=dash?0:Number(!!keys.KeyD)-Number(!!keys.KeyA);
+  const length=Math.hypot(forward,strafe);
+  moving=length>0;
+  if(moving){
+   const sprint=!hunt.localHunter&&!player.crouched&&(keys.ShiftLeft||keys.ShiftRight)&&hunt.stamina>0&&!hunt.exhausted;
+   if(sprint){
+    hunt.stamina=Math.max(0,hunt.stamina-dt);
+    hunt.exhausted=hunt.stamina===0
+   }
+   if(!sprint){
+    hunt.stamina=Math.min(3.7,hunt.stamina+dt*.68);
+    if(hunt.stamina>=1.15)hunt.exhausted=false
+   }
+   const speed=dash?7.2:player.crouched?1.55:sprint?4.75:hunt.localHunter?4.20:3.35;
+   const dx=(Math.sin(player.yaw)*forward+Math.cos(player.yaw)*strafe)*dt*speed/length;
+   const dz=(-Math.cos(player.yaw)*forward+Math.sin(player.yaw)*strafe)*dt*speed/length;
+   if(hunterSpawnContains(player.x+dx,player.z)&&!blocked(player.x+dx,player.z))player.x+=dx;
+   if(hunterSpawnContains(player.x,player.z+dz)&&!blocked(player.x,player.z+dz))player.z+=dz;
+   bob+=dt*speed*2.4
+  }else{
+   hunt.stamina=Math.min(3.7,hunt.stamina+dt*.85);
+   if(hunt.stamina>=1.15)hunt.exhausted=false
+  }
+ }
+ const item=hunterInteraction(hunt);
+ if(item?.action==='lamp'&&keys.KeyE&&!moving){
+  if(hunt.charge!==item.index){hunt.charge=item.index;hunt.chargeTime=0}
+  hunt.chargeTime+=dt;
+  if(hunt.chargeTime>=1.35&&hunt.chargeTime-dt<1.35)submitHunterAction('lamp',item.index)
+ }else{hunt.charge=-1;hunt.chargeTime=0}
+ promptEl.textContent=hunt.charge<0?item?.label||'':item.label+' · '+Math.min(100,Math.floor(hunt.chargeTime/1.35*100))+' %';
+ promptEl.style.opacity=item?'1':'0'
+}
+
+canvas.addEventListener('mousedown',event=>{
+ if(event.button===0&&document.pointerLockElement===canvas)hunterAttack()
+});
+
 function resize(){const d=Math.min(devicePixelRatio||1,1.6),w=Math.floor(innerWidth*d),h=Math.floor(innerHeight*d);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}}addEventListener('resize',resize);
 function update(dt){
+ if(room?.hunt){updateHunter(dt);return}
  for(const d of doors){d.rot+=(d.target-d.rot)*Math.min(1,dt*7.5);if(Math.abs(d.target-d.rot)<.0005)d.rot=d.target}
  if(!endingActive&&(!room?.round||room.host)&&
     (started||localPlayerPresent()||room?.remote?.present))updateSecretEnding(dt);
@@ -3081,10 +3843,10 @@ function drawImported(inst){
  }
 }
 
-function drawPetr(){
- gl.uniform1f(U.uGlow,0);const bones=buildPetrBones(performance.now());
+function drawPetr(actor=petr){
+ gl.uniform1f(U.uGlow,0);const bones=buildPetrBones(performance.now(),actor);
  gl.uniformMatrix4fv(U.bones,false,bones);
- gl.uniformMatrix4fv(U.uModel,false,modelMatrix(petr.x,petr.crouched?-.10:0,petr.z,.82,.82,.82,petr.yaw+Math.PI));
+ gl.uniformMatrix4fv(U.uModel,false,modelMatrix(actor.x,actor.crouched?-.10:0,actor.z,.82,.82,.82,actor.yaw+Math.PI));
  gl.uniform2f(U.uUVScale,1,1);gl.uniform3f(U.uTint,1,1,1);gl.bindTexture(gl.TEXTURE_2D,textures.petrDiffuse||textures.white);
  for(const m of petrRigMeshes){bindSkinnedMesh(m);gl.drawElements(gl.TRIANGLES,m.count,gl.UNSIGNED_SHORT,0)}
  disableSkinAttributes();bindGeometry();
@@ -3173,17 +3935,32 @@ function makePartnerMesh(){
 }
 function drawRoomPartner(dt){
  if(!room?.round)return;
- const peer=room.remote;
- if(!peer?.present||peer.hiding){
-  room.avatar=null;
+ if(room.hunt){
+  for(const participant of room.hunt.players.values()){
+   if(participant.id!==room.id&&participant.status==='active'){
+    drawRoomAvatar(participant,participant.pose,dt,participant.id===room.hunt.hunterId)
+   }
+  }
   return
  }
- const avatar=room.avatar??={x:peer.x,z:peer.z,yaw:peer.yaw,height:1.4,walk:0,run:0,crouch:0,phase:0};
+ drawRoomAvatar(room,room.remote,dt,false)
+}
+
+function drawRoomAvatar(owner,peer,dt,isHunter){
+ if(!peer?.present||peer.hiding){
+  owner.avatar=null;
+  return
+ }
+ const avatar=owner.avatar??={x:peer.x,z:peer.z,yaw:peer.yaw,height:1.4,walk:0,run:0,crouch:0,phase:0};
  const step=Math.min(1,dt*18);
  avatar.x+=(peer.x-avatar.x)*step;
  avatar.z+=(peer.z-avatar.z)*step;
  const turn=peer.yaw-avatar.yaw;
  avatar.yaw+=Math.atan2(Math.sin(turn),Math.cos(turn))*step;
+ if(isHunter){
+  drawPetr({...avatar,state:peer.moving?PETR_HUNT:PETR_PATROL,crouched:false});
+  return
+ }
  const mesh=partnerMesh??=makePartnerMesh();
  const scale=1.4/mesh.height;
  gl.uniformMatrix4fv(U.uModel,false,modelMatrix(avatar.x,0,avatar.z,scale,scale,scale,Math.PI-avatar.yaw));
@@ -3201,7 +3978,7 @@ const partnerNicknameEl=document.getElementById('partnerNickname');
 function updatePartnerNickname(view,proj,eye){
  const avatar=room?.avatar;
  const nickname=room?.remoteNickname;
- if(!started||hiddenIn||!avatar||!nickname){
+ if(!started||room?.hunt||hiddenIn||!avatar||!nickname){
   partnerNicknameEl.hidden=true;
   return
  }
@@ -3230,9 +4007,15 @@ function render(){
   gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.disable(gl.CULL_FACE);gl.disable(gl.BLEND);
   gl.clearColor(.0005,.0007,.0008,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.useProgram(program);bindGeometry();gl.activeTexture(gl.TEXTURE0);
   gl.uniformMatrix4fv(U.uView,false,view);gl.uniformMatrix4fv(U.uProj,false,proj);gl.uniform3fv(U.uCamPos,eye);gl.uniform3fv(U.uCamDir,dir);
-  gl.uniform3f(U.uFogColor,.0008,.0010,.0011);gl.uniform1f(U.uFlash,flashlight?.68:0.0);gl.uniform1f(U.uAmbient,flashlight?.006:.0032);gl.uniform1f(U.uGlow,0);gl.uniform1i(U.uTex,0);
-  for(const o of objects)drawObj(o,view,proj);for(const d of doors)drawDoor(d);for(const inst of importedModelInstances)drawImported(inst);
-  drawPetr();drawRoomPartner(dt);updatePartnerNickname(view,proj,eye);if(mapVisible)drawMini();
+  gl.uniform3f(U.uFogColor,.0008,.0010,.0011);gl.uniform1f(U.uFlash,flashlight?.68:0.0);gl.uniform1f(U.uAmbient,room?.hunt?.064:flashlight?.006:.0032);gl.uniform1f(U.uGlow,0);gl.uniform1i(U.uTex,0);
+  const hunt=room?.hunt;
+  gl.uniform4fv(U['uHunterLights[0]'],hunt?.lights||hunterLightsOff);
+  for(const o of objects)drawObj(o,view,proj);
+  for(const d of doors)drawDoor(d);
+  if(!hunt){for(const inst of importedModelInstances)drawImported(inst);drawPetr()}
+  drawRoomPartner(dt);
+  updatePartnerNickname(view,proj,eye);
+  if(mapVisible)drawMini();
   const err=gl.getError();if(err!==gl.NO_ERROR)throw new Error('WebGL chyba: '+err);
   requestAnimationFrame(render);
  }catch(e){showFatal('Vykreslování 3D scény se zastavilo.',String(e.stack||e));}
